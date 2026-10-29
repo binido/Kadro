@@ -8,7 +8,7 @@ use objc2_app_kit::{
     NSControlStateValueOff, NSControlStateValueOn, NSEvent, NSEventModifierFlags, NSGridCell,
     NSGridCellPlacement, NSGridView, NSLineBreakMode, NSModalResponseOK, NSOpenPanel, NSResponder,
     NSStackView, NSTabViewController, NSTabViewControllerTabStyle, NSTabViewItem, NSTextField, NSView,
-    NSViewController, NSWindow, NSWindowStyleMask, NSWindowToolbarStyle,
+    NSViewController, NSWindow, NSWindowStyleMask, NSWindowToolbarStyle, NSWorkspace,
 };
 use objc2_foundation::{ns_string, NSArray, NSObject, NSPoint, NSRange, NSRect, NSSize, NSString, NSURL};
 use objc2_service_management::{SMAppService, SMAppServiceStatus};
@@ -20,6 +20,7 @@ use crate::settings::{self, Format, Settings};
 const MARGIN: f64 = 24.0;
 const FIELD_WIDTH: f64 = 240.0;
 const SHORTCUT_WIDTH: f64 = 140.0;
+const KEYBOARD_SETTINGS_URL: &str = "x-apple.systempreferences:com.apple.Keyboard-Settings.extension";
 const FONT_SIZE: f64 = 13.0;
 const ESCAPE_KEY: u16 = 53;
 const DELETE_KEYS: [u16; 2] = [51, 117];
@@ -74,6 +75,13 @@ define_class!(
                 if let Some(button) = self.ivars().directory.get() {
                     button.setTitle(&NSString::from_str(&display_path(&path.to_string())));
                 }
+            }
+        }
+
+        #[unsafe(method(openKeyboardSettings:))]
+        fn open_keyboard_settings(&self, _sender: &NSButton) {
+            if let Some(url) = NSURL::URLWithString(ns_string!(KEYBOARD_SETTINGS_URL)) {
+                NSWorkspace::sharedWorkspace().openURL(&url);
             }
         }
 
@@ -267,7 +275,7 @@ fn build_window(mtm: MainThreadMarker) -> Retained<NSWindow> {
     tabs.setTabStyle(NSTabViewControllerTabStyle::Toolbar);
     for (title, icon, view) in [
         ("General", assets::SLIDERS, general_tab(mtm, &controller)),
-        ("Shortcuts", assets::KEYBOARD, shortcuts_tab(mtm)),
+        ("Shortcuts", assets::KEYBOARD, shortcuts_tab(mtm, &controller)),
     ] {
         let page = NSViewController::new(mtm);
         page.setView(&view);
@@ -349,29 +357,54 @@ fn general_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSVie
         Row::Separator,
         Row::Field("Autostart".into(), view(&login)),
         Row::Field("After screenshot".into(), inline(mtm, &[view(&copy), view(&save)])),
-    ])
+    ], Columns::Fitted)
 }
 
-fn shortcuts_tab(mtm: MainThreadMarker) -> Retained<NSView> {
+fn shortcuts_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView> {
+    let title = label(mtm, "Use ⇧⌘3 and ⇧⌘4 for Kadro");
+    title.setFont(Some(&assets::semibold_font(FONT_SIZE)));
+    let open_settings = unsafe {
+        NSButton::buttonWithTitle_target_action(
+            ns_string!("Open Keyboard Settings"),
+            Some(controller),
+            Some(sel!(openKeyboardSettings:)),
+            mtm,
+        )
+    };
+    open_settings.setFont(Some(&assets::font(FONT_SIZE)));
+
     let message = label(mtm, "");
     message.setTextColor(Some(&NSColor::systemRedColor()));
     let hint = label(mtm, "Click a shortcut and press new keys. ⌫ clears it, Esc cancels.");
     hint.setTextColor(Some(&NSColor::secondaryLabelColor()));
 
-    let mut rows: Vec<Row> = Action::ALL
-        .iter()
-        .map(|action| {
-            let button = ShortcutButton::new(mtm, *action, &message);
-            button.widthAnchor().constraintEqualToConstant(SHORTCUT_WIDTH).setActive(true);
-            Row::Field(action.title().into(), view(&button))
-        })
-        .collect();
+    let mut rows = vec![
+        Row::Note(view(&title)),
+        Row::Note(view(&label(mtm, "1. Open System Settings → Keyboard → Keyboard Shortcuts."))),
+        Row::Note(view(&open_settings)),
+        Row::Note(view(&label(mtm, "2. In Screenshots, turn off the shortcuts you want to reuse."))),
+        Row::Note(view(&label(mtm, "3. Record them below, e.g. ⇧⌘3 for full screen, ⇧⌘4 for region."))),
+        Row::Separator,
+    ];
+    rows.extend(Action::ALL.iter().map(|action| {
+        let button = ShortcutButton::new(mtm, *action, &message);
+        button.widthAnchor().constraintEqualToConstant(SHORTCUT_WIDTH).setActive(true);
+        Row::Field(action.title().into(), view(&button))
+    }));
     rows.extend([Row::Separator, Row::Note(view(&hint)), Row::Note(view(&message))]);
-    grid(mtm, rows)
+    grid(mtm, rows, Columns::Balanced)
+}
+
+/// Ширина колонок таблицы настроек.
+enum Columns {
+    /// По содержимому.
+    Fitted,
+    /// Поровну, чтобы граница подписей и контролов шла по центру окна.
+    Balanced,
 }
 
 /// Таблица настроек: подписи справа налево к контролам, разделители и пояснения во всю ширину.
-fn grid(mtm: MainThreadMarker, rows: Vec<Row>) -> Retained<NSView> {
+fn grid(mtm: MainThreadMarker, rows: Vec<Row>, columns: Columns) -> Retained<NSView> {
     let cells: Vec<_> = rows
         .iter()
         .map(|row| {
@@ -406,6 +439,12 @@ fn grid(mtm: MainThreadMarker, rows: Vec<Row>) -> Retained<NSView> {
             separator.setTopPadding(4.0);
             separator.setBottomPadding(4.0);
         }
+    }
+
+    if let Columns::Balanced = columns {
+        let half = (grid.fittingSize().width - grid.columnSpacing()) / 2.0;
+        grid.columnAtIndex(0).setWidth(half);
+        grid.columnAtIndex(1).setWidth(half);
     }
 
     let size = grid.fittingSize();

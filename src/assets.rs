@@ -1,7 +1,7 @@
 use std::cell::OnceCell;
 
 use objc2::rc::Retained;
-use objc2::AnyThread;
+use objc2::{AnyThread, Message};
 use objc2::runtime::AnyObject;
 use objc2_app_kit::{NSFont, NSFontDescriptor, NSFontVariationAttribute, NSImage};
 use objc2_core_foundation::{CFData, CGSize};
@@ -12,6 +12,7 @@ const SPACE_GROTESK: &[u8] = include_bytes!("../assets/SpaceGrotesk.ttf");
 // Ось толщины 'wght' вариативного шрифта.
 const WEIGHT_AXIS: u32 = u32::from_be_bytes(*b"wght");
 const REGULAR_WEIGHT: f64 = 400.0;
+const SEMIBOLD_WEIGHT: f64 = 600.0;
 
 pub const APERTURE: &[u8] = include_bytes!("../assets/icons/aperture.svg");
 pub const SQUARE_DASHED: &[u8] = include_bytes!("../assets/icons/square-dashed.svg");
@@ -26,27 +27,37 @@ thread_local! {
     static FONT: OnceCell<Option<Retained<NSFontDescriptor>>> = const { OnceCell::new() };
 }
 
-/// Space Grotesk нужного размера, системный шрифт - если файл шрифта не разобрался.
+/// Space Grotesk обычного начертания.
 pub fn font(size: f64) -> Retained<NSFont> {
-    let descriptor = FONT.with(|cell| {
+    weighted_font(size, REGULAR_WEIGHT)
+}
+
+/// Space Grotesk полужирного начертания для заголовков.
+pub fn semibold_font(size: f64) -> Retained<NSFont> {
+    weighted_font(size, SEMIBOLD_WEIGHT)
+}
+
+/// Возвращает системный шрифт, если файл шрифта не разобрался.
+fn weighted_font(size: f64, weight: f64) -> Retained<NSFont> {
+    let base = FONT.with(|cell| {
         cell.get_or_init(|| {
             let data = CFData::from_static_bytes(SPACE_GROTESK);
             let descriptor = unsafe { CTFontManagerCreateFontDescriptorFromData(&data) }?;
             // CTFontDescriptor и NSFontDescriptor взаимозаменяемы без копирования.
             let descriptor: &NSFontDescriptor = unsafe { &*(&*descriptor as *const _ as *const NSFontDescriptor) };
-            // Без явной толщины вариативный файл открывается начертанием Light.
-            let axes = NSDictionary::from_slices(&[&*NSNumber::new_u32(WEIGHT_AXIS)], &[&*NSNumber::new_f64(REGULAR_WEIGHT)]);
-            let attributes = NSDictionary::<NSString, AnyObject>::from_slices(
-                &[unsafe { NSFontVariationAttribute }],
-                &[&**axes as &AnyObject],
-            );
-            Some(unsafe { descriptor.fontDescriptorByAddingAttributes(&attributes) })
+            Some(descriptor.retain())
         })
         .clone()
     });
-    descriptor
-        .and_then(|d| NSFont::fontWithDescriptor_size(&d, size))
-        .unwrap_or_else(|| NSFont::systemFontOfSize(size))
+    let Some(base) = base else {
+        return NSFont::systemFontOfSize(size);
+    };
+    // Без явной толщины вариативный файл открывается начертанием Light.
+    let axes = NSDictionary::from_slices(&[&*NSNumber::new_u32(WEIGHT_AXIS)], &[&*NSNumber::new_f64(weight)]);
+    let attributes =
+        NSDictionary::<NSString, AnyObject>::from_slices(&[unsafe { NSFontVariationAttribute }], &[&**axes as &AnyObject]);
+    let descriptor = unsafe { base.fontDescriptorByAddingAttributes(&attributes) };
+    NSFont::fontWithDescriptor_size(&descriptor, size).unwrap_or_else(|| NSFont::systemFontOfSize(size))
 }
 
 /// Иконка Lucide как шаблонное изображение, которое AppKit сам перекрашивает под тему.
