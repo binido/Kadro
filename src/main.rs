@@ -1,18 +1,23 @@
+mod assets;
 mod capture;
+mod hotkeys;
 mod output;
 mod overlay;
+mod prefs;
 mod settings;
 
 use std::cell::OnceCell;
 
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, ProtocolObject, Sel};
+use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSImage, NSMenu,
-    NSMenuItem, NSStatusBar, NSStatusItem, NSVariableStatusItemLength,
+    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSEventModifierFlags, NSMenu,
+    NSMenuDelegate, NSMenuItem, NSStatusBar, NSStatusItem, NSVariableStatusItemLength,
 };
 use objc2_foundation::{ns_string, NSNotification, NSObject, NSObjectProtocol, NSString};
+
+use hotkeys::Action;
 
 #[derive(Default)]
 struct Ivars {
@@ -32,23 +37,42 @@ define_class!(
         #[unsafe(method(applicationDidFinishLaunching:))]
         fn did_finish_launching(&self, _notification: &NSNotification) {
             self.install_status_item();
+            hotkeys::install();
+        }
+    }
+
+    unsafe impl NSMenuDelegate for AppDelegate {
+        // Сочетания могли поменяться в настройках, поэтому подписи обновляются при каждом открытии.
+        #[unsafe(method(menuNeedsUpdate:))]
+        fn menu_needs_update(&self, menu: &NSMenu) {
+            for item in menu.itemArray() {
+                let Some(action) = action_for_tag(item.tag()) else { continue };
+                match action.shortcut() {
+                    Some(shortcut) => {
+                        let key = shortcut.key_name().filter(|k| k.chars().count() == 1).unwrap_or("");
+                        item.setKeyEquivalent(&NSString::from_str(&key.to_lowercase()));
+                        item.setKeyEquivalentModifierMask(shortcut.menu_modifiers());
+                    }
+                    None => {
+                        item.setKeyEquivalent(ns_string!(""));
+                        item.setKeyEquivalentModifierMask(NSEventModifierFlags::empty());
+                    }
+                }
+            }
         }
     }
 
     impl AppDelegate {
-        #[unsafe(method(captureRegion:))]
-        fn capture_region(&self, _sender: Option<&AnyObject>) {
-            overlay::select(self.mtm(), overlay::Mode::Region);
+        #[unsafe(method(runAction:))]
+        fn run_action(&self, sender: &NSMenuItem) {
+            if let Some(action) = action_for_tag(sender.tag()) {
+                action.run(self.mtm());
+            }
         }
 
-        #[unsafe(method(captureWindow:))]
-        fn capture_window(&self, _sender: Option<&AnyObject>) {
-            overlay::select(self.mtm(), overlay::Mode::Window);
-        }
-
-        #[unsafe(method(captureScreen:))]
-        fn capture_screen(&self, _sender: Option<&AnyObject>) {
-            capture::capture_screen();
+        #[unsafe(method(showSettings:))]
+        fn show_settings(&self, _sender: Option<&AnyObject>) {
+            prefs::show(self.mtm());
         }
     }
 );
@@ -63,40 +87,44 @@ impl AppDelegate {
         let mtm = self.mtm();
         let item = NSStatusBar::systemStatusBar().statusItemWithLength(NSVariableStatusItemLength);
         if let Some(button) = item.button(mtm) {
-            let icon = NSImage::imageWithSystemSymbolName_accessibilityDescription(
-                ns_string!("camera.viewfinder"),
-                Some(ns_string!("Kadro")),
-            );
-            button.setImage(icon.as_deref());
+            button.setImage(assets::icon(assets::APERTURE, 18.0).as_deref());
         }
 
         let menu = NSMenu::new(mtm);
-        self.add_menu_item(&menu, "Capture Region", sel!(captureRegion:));
-        self.add_menu_item(&menu, "Capture Full Screen", sel!(captureScreen:));
-        self.add_menu_item(&menu, "Capture Window", sel!(captureWindow:));
+        menu.setDelegate(Some(ProtocolObject::from_ref(self)));
+        for (index, action) in Action::ALL.iter().enumerate() {
+            let icon = match action {
+                Action::Screen => assets::MONITOR,
+                Action::Region => assets::SQUARE_DASHED,
+                Action::Window => assets::APP_WINDOW,
+            };
+            let item = self.add_item(&menu, action.title(), sel!(runAction:), "", icon);
+            item.setTag(index as isize + 1);
+        }
+        menu.addItem(&NSMenuItem::separatorItem(mtm));
+        self.add_item(&menu, "Settings…", sel!(showSettings:), ",", assets::SETTINGS);
         menu.addItem(&NSMenuItem::separatorItem(mtm));
         // Без target действие уходит по цепочке ответчиков и попадает в NSApplication.
         unsafe {
-            menu.addItemWithTitle_action_keyEquivalent(
-                ns_string!("Quit Kadro"),
-                Some(sel!(terminate:)),
-                ns_string!("q"),
-            )
+            menu.addItemWithTitle_action_keyEquivalent(ns_string!("Quit Kadro"), Some(sel!(terminate:)), ns_string!("q"))
         };
         item.setMenu(Some(&menu));
         let _ = self.ivars().status_item.set(item);
     }
 
-    fn add_menu_item(&self, menu: &NSMenu, title: &str, action: Sel) {
+    fn add_item(&self, menu: &NSMenu, title: &str, action: objc2::runtime::Sel, key: &str, icon: &[u8]) -> Retained<NSMenuItem> {
         let item = unsafe {
-            menu.addItemWithTitle_action_keyEquivalent(
-                &NSString::from_str(title),
-                Some(action),
-                ns_string!(""),
-            )
+            menu.addItemWithTitle_action_keyEquivalent(&NSString::from_str(title), Some(action), &NSString::from_str(key))
         };
         unsafe { item.setTarget(Some(self)) };
+        item.setImage(assets::icon(icon, 16.0).as_deref());
+        item
     }
+}
+
+/// Пункты действий помечены tag = индекс + 1, у остальных пунктов tag 0.
+fn action_for_tag(tag: isize) -> Option<Action> {
+    Action::ALL.get(usize::try_from(tag - 1).ok()?).copied()
 }
 
 fn main() {
