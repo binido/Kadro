@@ -38,7 +38,12 @@ define_class!(
     impl AppDelegate {
         #[unsafe(method(captureRegion:))]
         fn capture_region(&self, _sender: Option<&AnyObject>) {
-            overlay::select_region(self.mtm());
+            overlay::select(self.mtm(), overlay::Mode::Region);
+        }
+
+        #[unsafe(method(captureWindow:))]
+        fn capture_window(&self, _sender: Option<&AnyObject>) {
+            overlay::select(self.mtm(), overlay::Mode::Window);
         }
 
         #[unsafe(method(captureScreen:))]
@@ -68,6 +73,7 @@ impl AppDelegate {
         let menu = NSMenu::new(mtm);
         self.add_menu_item(&menu, "Capture Region", sel!(captureRegion:));
         self.add_menu_item(&menu, "Capture Full Screen", sel!(captureScreen:));
+        self.add_menu_item(&menu, "Capture Window", sel!(captureWindow:));
         menu.addItem(&NSMenuItem::separatorItem(mtm));
         // Без target действие уходит по цепочке ответчиков и попадает в NSApplication.
         unsafe {

@@ -2,22 +2,43 @@ use std::cell::{Cell, RefCell};
 
 use dispatch2::DispatchQueue;
 use objc2::rc::Retained;
+use objc2::runtime::AnyObject;
 use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSApplication, NSBackingStoreType, NSBezierPath, NSColor, NSCompositingOperation, NSCursor,
     NSEvent, NSRectFill, NSRectFillUsingOperation, NSResponder, NSScreen, NSScreenSaverWindowLevel,
     NSView, NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask,
 };
-use objc2_core_foundation::{CGPoint, CGRect, CGSize};
-use objc2_core_graphics::CGDirectDisplayID;
-use objc2_foundation::{ns_string, NSNumber, NSObject, NSPoint, NSRect};
+use objc2_core_foundation::{CFDictionary, CGPoint, CGRect, CGSize};
+use objc2_core_graphics::{
+    kCGNullWindowID, CGDirectDisplayID, CGDisplayBounds, CGEvent, CGRectMakeWithDictionaryRepresentation,
+    CGWindowID, CGWindowListCopyWindowInfo, CGWindowListOption,
+};
+use objc2_foundation::{ns_string, NSArray, NSDictionary, NSNumber, NSObject, NSPoint, NSRect, NSString};
 
 use crate::capture;
 
 const ESCAPE_KEY: u16 = 53;
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum Mode {
+    Region,
+    Window,
+}
+
+/// Окно другого приложения в глобальных координатах CG - от левого верхнего угла главного дисплея.
+#[derive(Clone, Copy)]
+struct TargetWindow {
+    id: CGWindowID,
+    frame: CGRect,
+}
+
 thread_local! {
     static WINDOWS: RefCell<Vec<Retained<OverlayWindow>>> = const { RefCell::new(Vec::new()) };
+    static MODE: Cell<Mode> = const { Cell::new(Mode::Region) };
+    // Окна на экране от переднего к заднему, снятые в момент открытия оверлея.
+    static TARGETS: RefCell<Vec<TargetWindow>> = const { RefCell::new(Vec::new()) };
+    static HOVERED: Cell<Option<TargetWindow>> = const { Cell::new(None) };
 }
 
 define_class!(
@@ -60,19 +81,56 @@ define_class!(
 
         #[unsafe(method(drawRect:))]
         fn draw_rect(&self, _dirty: NSRect) {
-            NSColor::colorWithWhite_alpha(0.0, 0.25).setFill();
-            NSRectFill(self.bounds());
-            if let Some(selection) = self.ivars().selection.get() {
-                NSRectFillUsingOperation(selection, NSCompositingOperation::Clear);
-                NSColor::whiteColor().setStroke();
-                NSBezierPath::strokeRect(selection);
+            match MODE.get() {
+                Mode::Region => {
+                    NSColor::colorWithWhite_alpha(0.0, 0.25).setFill();
+                    NSRectFill(self.bounds());
+                    if let Some(selection) = self.ivars().selection.get() {
+                        NSRectFillUsingOperation(selection, NSCompositingOperation::Clear);
+                        NSColor::whiteColor().setStroke();
+                        NSBezierPath::strokeRect(selection);
+                    }
+                }
+                Mode::Window => {
+                    if let Some(target) = HOVERED.get() {
+                        let rect = self.local_rect(target.frame);
+                        NSColor::selectedContentBackgroundColor().colorWithAlphaComponent(0.3).setFill();
+                        NSRectFill(rect);
+                        NSColor::selectedContentBackgroundColor().setStroke();
+                        NSBezierPath::strokeRect(rect);
+                        // Окна выше выбранного в снимок не попадут, поэтому подсветка их не закрашивает.
+                        TARGETS.with_borrow(|targets| {
+                            for above in targets.iter().take_while(|t| t.id != target.id) {
+                                NSRectFillUsingOperation(self.local_rect(above.frame), NSCompositingOperation::Clear);
+                            }
+                        });
+                    }
+                }
+            }
+        }
+
+        #[unsafe(method(mouseMoved:))]
+        fn mouse_moved(&self, _event: &NSEvent) {
+            if MODE.get() == Mode::Window {
+                update_hover();
             }
         }
 
         #[unsafe(method(mouseDown:))]
         fn mouse_down(&self, event: &NSEvent) {
-            self.ivars().start.set(Some(self.point(event)));
-            self.ivars().selection.set(None);
+            match MODE.get() {
+                Mode::Region => {
+                    self.ivars().start.set(Some(self.point(event)));
+                    self.ivars().selection.set(None);
+                }
+                Mode::Window => {
+                    update_hover();
+                    if let Some(target) = HOVERED.get() {
+                        close();
+                        capture::capture_window(target.id);
+                    }
+                }
+            }
         }
 
         #[unsafe(method(mouseDragged:))]
@@ -84,6 +142,9 @@ define_class!(
 
         #[unsafe(method(mouseUp:))]
         fn mouse_up(&self, _event: &NSEvent) {
+            if MODE.get() != Mode::Region {
+                return;
+            }
             self.ivars().start.set(None);
             match self.ivars().selection.get() {
                 // Клик без протягивания - не выделение, оверлей остаётся открытым.
@@ -94,7 +155,8 @@ define_class!(
                         CGPoint::new(rect.origin.x, height - rect.origin.y - rect.size.height),
                         rect.size,
                     );
-                    finish(Some((self.ivars().display.get(), flipped)));
+                    close();
+                    capture::capture_region(self.ivars().display.get(), flipped);
                 }
                 _ => {
                     self.ivars().selection.set(None);
@@ -106,7 +168,7 @@ define_class!(
         #[unsafe(method(keyDown:))]
         fn key_down(&self, event: &NSEvent) {
             if event.keyCode() == ESCAPE_KEY {
-                finish(None);
+                close();
             }
         }
     }
@@ -126,13 +188,30 @@ impl SelectionView {
         let size = self.bounds().size;
         NSPoint::new(p.x.clamp(0.0, size.width), p.y.clamp(0.0, size.height))
     }
+
+    /// Переводит прямоугольник из глобальных координат CG в координаты вида.
+    fn local_rect(&self, global: CGRect) -> NSRect {
+        let display = CGDisplayBounds(self.ivars().display.get());
+        let x = global.origin.x - display.origin.x;
+        let top = global.origin.y - display.origin.y;
+        NSRect::new(
+            NSPoint::new(x, display.size.height - top - global.size.height),
+            global.size,
+        )
+    }
 }
 
-/// Показывает оверлей выделения области на всех экранах.
-pub fn select_region(mtm: MainThreadMarker) {
+/// Показывает оверлей на всех экранах: выделение области или выбор окна.
+pub fn select(mtm: MainThreadMarker, mode: Mode) {
     if !capture::has_access() || WINDOWS.with_borrow(|w| !w.is_empty()) {
         return;
     }
+    MODE.set(mode);
+    if mode == Mode::Window {
+        TARGETS.set(on_screen_windows());
+        HOVERED.set(window_under_cursor());
+    }
+
     let mouse = NSEvent::mouseLocation();
     let windows: Vec<_> = NSScreen::screens(mtm)
         .iter()
@@ -146,7 +225,9 @@ pub fn select_region(mtm: MainThreadMarker) {
             window.orderFrontRegardless();
         }
     }
-    NSCursor::crosshairCursor().push();
+    if mode == Mode::Region {
+        NSCursor::crosshairCursor().push();
+    }
     WINDOWS.set(windows);
 }
 
@@ -167,6 +248,7 @@ fn overlay_window(mtm: MainThreadMarker, screen: &NSScreen) -> Retained<OverlayW
     window.setLevel(NSScreenSaverWindowLevel);
     window.setOpaque(false);
     window.setHasShadow(false);
+    window.setAcceptsMouseMovedEvents(true);
     window.setBackgroundColor(Some(&NSColor::clearColor()));
     window.setCollectionBehavior(
         NSWindowCollectionBehavior::CanJoinAllSpaces | NSWindowCollectionBehavior::FullScreenAuxiliary,
@@ -187,14 +269,67 @@ fn display_id(screen: &NSScreen) -> CGDirectDisplayID {
         .map_or(0, |n| n.unsignedIntValue())
 }
 
-fn finish(selection: Option<(CGDirectDisplayID, CGRect)>) {
+/// Собирает обычные окна других приложений, от переднего к заднему.
+fn on_screen_windows() -> Vec<TargetWindow> {
+    let options = CGWindowListOption::OptionOnScreenOnly | CGWindowListOption::ExcludeDesktopElements;
+    let Some(list) = CGWindowListCopyWindowInfo(options, kCGNullWindowID) else {
+        return Vec::new();
+    };
+    // CFArray и NSArray взаимозаменяемы без копирования.
+    let list: &NSArray<NSDictionary<NSString, AnyObject>> = unsafe { &*(&*list as *const _ as *const _) };
+    let own_pid = std::process::id() as isize;
+    let number = |info: &NSDictionary<NSString, AnyObject>, key: &NSString| {
+        info.objectForKey(key)?.downcast::<NSNumber>().ok()
+    };
+
+    list.iter()
+        .filter_map(|info| {
+            // Слой 0 - обычные окна, выше лежат строка меню, Dock и всплывающие панели.
+            if number(&info, ns_string!("kCGWindowLayer"))?.integerValue() != 0
+                || number(&info, ns_string!("kCGWindowOwnerPID"))?.integerValue() == own_pid
+                // Браузеры держат над вкладками полностью прозрачные окна, курсор не должен на них цепляться.
+                || number(&info, ns_string!("kCGWindowAlpha"))?.doubleValue() == 0.0
+            {
+                return None;
+            }
+            let bounds = info.objectForKey(ns_string!("kCGWindowBounds"))?;
+            let mut frame = CGRect::default();
+            let bounds: &CFDictionary = unsafe { &*(&*bounds as *const AnyObject as *const CFDictionary) };
+            unsafe { CGRectMakeWithDictionaryRepresentation(Some(bounds), &mut frame) }.then_some(())?;
+            let id = number(&info, ns_string!("kCGWindowNumber"))?.unsignedIntValue();
+            Some(TargetWindow { id, frame })
+        })
+        .collect()
+}
+
+fn window_under_cursor() -> Option<TargetWindow> {
+    let cursor = CGEvent::location(CGEvent::new(None).as_deref());
+    TARGETS.with_borrow(|targets| targets.iter().copied().find(|t| capture::contains(t.frame, cursor)))
+}
+
+fn update_hover() {
+    let hovered = window_under_cursor();
+    if hovered.map(|t| t.id) != HOVERED.get().map(|t| t.id) {
+        HOVERED.set(hovered);
+        WINDOWS.with_borrow(|windows| {
+            for window in windows {
+                if let Some(view) = window.contentView() {
+                    view.setNeedsDisplay(true);
+                }
+            }
+        });
+    }
+}
+
+fn close() {
     WINDOWS.with_borrow(|windows| windows.iter().for_each(|w| w.orderOut(None)));
-    NSCursor::pop_class();
+    if MODE.get() == Mode::Region {
+        NSCursor::pop_class();
+    }
+    TARGETS.take();
+    HOVERED.set(None);
     // Окна освобождаются после выхода из обработчика события, а не посреди него.
     DispatchQueue::main().exec_async(|| drop(WINDOWS.take()));
-    if let Some((display, rect)) = selection {
-        capture::capture_region(display, rect);
-    }
 }
 
 fn rect_between(a: NSPoint, b: NSPoint) -> NSRect {

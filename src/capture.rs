@@ -2,7 +2,7 @@ use block2::RcBlock;
 use objc2::AnyThread;
 use objc2_core_foundation::{CGPoint, CGRect};
 use objc2_core_graphics::{
-    CGDirectDisplayID, CGEvent, CGImage, CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess,
+    CGDirectDisplayID, CGEvent, CGImage, CGWindowID, CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess,
 };
 use objc2_foundation::{NSArray, NSError};
 use objc2_screen_capture_kit::{
@@ -36,11 +36,33 @@ pub fn capture_region(display_id: CGDirectDisplayID, rect: CGRect) {
     capture(move |display| unsafe { display.displayID() } == display_id, Some(rect));
 }
 
-fn capture(pick: impl Fn(&SCDisplay) -> bool + 'static, region: Option<CGRect>) {
-    let handler = RcBlock::new(move |content: *mut SCShareableContent, error: *mut NSError| {
-        let Some(content) = (unsafe { content.as_ref() }) else {
-            return report(error);
+/// Снимает окно без тени.
+pub fn capture_window(window_id: CGWindowID) {
+    with_content(move |content| {
+        let Some(window) = unsafe { content.windows() }
+            .iter()
+            .find(|w| unsafe { w.windowID() } == window_id)
+        else {
+            return eprintln!("kadro: window to capture is gone");
         };
+        let filter = unsafe {
+            SCContentFilter::initWithDesktopIndependentWindow(SCContentFilter::alloc(), &window)
+        };
+        let scale = unsafe { filter.pointPixelScale() } as f64;
+        let size = unsafe { window.frame() }.size;
+        let config = unsafe { SCStreamConfiguration::new() };
+        unsafe {
+            config.setWidth((size.width * scale).round() as usize);
+            config.setHeight((size.height * scale).round() as usize);
+            config.setIgnoreShadowsSingleWindow(true);
+            config.setShowsCursor(false);
+        }
+        shoot(&filter, &config, scale);
+    });
+}
+
+fn capture(pick: impl Fn(&SCDisplay) -> bool + 'static, region: Option<CGRect>) {
+    with_content(move |content| {
         let Some(display) = unsafe { content.displays() }.iter().find(|d| pick(d)) else {
             return eprintln!("kadro: display to capture is gone");
         };
@@ -71,6 +93,15 @@ fn capture(pick: impl Fn(&SCDisplay) -> bool + 'static, region: Option<CGRect>) 
             config.setShowsCursor(false);
         }
         shoot(&filter, &config, scale);
+    });
+}
+
+fn with_content(f: impl Fn(&SCShareableContent) + 'static) {
+    let handler = RcBlock::new(move |content: *mut SCShareableContent, error: *mut NSError| {
+        match unsafe { content.as_ref() } {
+            Some(content) => f(content),
+            None => report(error),
+        }
     });
     unsafe { SCShareableContent::getShareableContentWithCompletionHandler(&handler) };
 }
