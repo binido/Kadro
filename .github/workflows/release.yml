@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # macos-15 работает на Apple Silicon, поэтому сборка получается только под arm64.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      # Версия из Cargo.toml попадает в Info.plist, тег должен с ней совпадать.
+      - name: Check tag matches Cargo.toml version
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+          test "$GITHUB_REF_NAME" = "v$version" || { echo "Tag $GITHUB_REF_NAME does not match Cargo.toml version $version"; exit 1; }
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo clippy --all-targets -- -D warnings
+
+      - run: cargo test
+
+      - run: ./scripts/bundle.sh
+
+      - name: Check architecture
+        run: test "$(lipo -archs build/Kadro.app/Contents/MacOS/Kadro)" = arm64
+
+      # ditto сохраняет подпись и права файлов внутри .app, обычный zip их теряет.
+      - name: Zip app
+        run: ditto -c -k --keepParent build/Kadro.app "Kadro-${GITHUB_REF_NAME#v}-arm64.zip"
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" "Kadro-${GITHUB_REF_NAME#v}-arm64.zip" --draft --generate-notes --title "Kadro $GITHUB_REF_NAME"
