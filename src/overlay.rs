@@ -191,19 +191,21 @@ impl SelectionView {
 
     /// Переводит прямоугольник из глобальных координат CG в координаты вида.
     fn local_rect(&self, global: CGRect) -> NSRect {
-        let display = CGDisplayBounds(self.ivars().display.get());
-        let x = global.origin.x - display.origin.x;
-        let top = global.origin.y - display.origin.y;
-        NSRect::new(
-            NSPoint::new(x, display.size.height - top - global.size.height),
-            global.size,
-        )
+        to_display_local(global, CGDisplayBounds(self.ivars().display.get()))
     }
+}
+
+/// Переводит прямоугольник из глобальных координат CG (начало вверху слева главного дисплея)
+/// в координаты вида на дисплее `display` (начало внизу слева этого дисплея).
+fn to_display_local(global: CGRect, display: CGRect) -> NSRect {
+    let x = global.origin.x - display.origin.x;
+    let top = global.origin.y - display.origin.y;
+    NSRect::new(NSPoint::new(x, display.size.height - top - global.size.height), global.size)
 }
 
 /// Показывает оверлей на всех экранах: выделение области или выбор окна.
 pub fn select(mtm: MainThreadMarker, mode: Mode) {
-    if !capture::has_access() || WINDOWS.with_borrow(|w| !w.is_empty()) {
+    if !capture::has_access(mtm) || WINDOWS.with_borrow(|w| !w.is_empty()) {
         return;
     }
     MODE.set(mode);
@@ -337,4 +339,18 @@ fn rect_between(a: NSPoint, b: NSPoint) -> NSRect {
         NSPoint::new(a.x.min(b.x), a.y.min(b.y)),
         CGSize::new((a.x - b.x).abs(), (a.y - b.y).abs()),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn window_on_display_left_and_above_main_maps_into_its_view() {
+        let display = CGRect::new(CGPoint::new(-1920.0, -400.0), CGSize::new(1920.0, 1080.0));
+        let window = CGRect::new(CGPoint::new(-1820.0, -300.0), CGSize::new(800.0, 600.0));
+        let local = to_display_local(window, display);
+        assert_eq!(local.origin, NSPoint::new(100.0, 380.0));
+        assert_eq!(local.size, window.size);
+    }
 }

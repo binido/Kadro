@@ -183,7 +183,7 @@ impl Action {
 
     pub fn run(self, mtm: MainThreadMarker) {
         match self {
-            Action::Screen => capture::capture_screen(),
+            Action::Screen => capture::capture_screen(mtm),
             Action::Region => overlay::select(mtm, overlay::Mode::Region),
             Action::Window => overlay::select(mtm, overlay::Mode::Window),
         }

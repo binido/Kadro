@@ -1,29 +1,61 @@
+use std::cell::Cell;
+
 use block2::RcBlock;
-use objc2::AnyThread;
+use dispatch2::DispatchQueue;
+use objc2::{AnyThread, MainThreadMarker};
+use objc2_app_kit::{NSAlert, NSAlertFirstButtonReturn, NSApplication, NSWorkspace};
 use objc2_core_foundation::{CGPoint, CGRect};
 use objc2_core_graphics::{
     CGDirectDisplayID, CGEvent, CGImage, CGWindowID, CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess,
 };
-use objc2_foundation::{NSArray, NSError};
+use objc2_foundation::{ns_string, NSArray, NSError, NSURL};
 use objc2_screen_capture_kit::{
     SCContentFilter, SCDisplay, SCScreenshotManager, SCShareableContent, SCStreamConfiguration,
 };
 
 use crate::output;
 
-/// Проверяет доступ к записи экрана и при его отсутствии показывает системный запрос.
-pub fn has_access() -> bool {
+const SCREEN_RECORDING_SETTINGS_URL: &str =
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
+
+thread_local! {
+    static ACCESS_REQUESTED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Проверяет доступ к записи экрана. Без доступа объясняет, где его включить.
+pub fn has_access(mtm: MainThreadMarker) -> bool {
     if CGPreflightScreenCaptureAccess() {
         return true;
     }
-    // Ответ на запрос вступает в силу только после перезапуска приложения.
-    CGRequestScreenCaptureAccess();
+    // Системный запрос macOS показывает один раз, потом молча отказывает.
+    // Поэтому при первой попытке за запуск - он, а дальше своё объяснение.
+    if !ACCESS_REQUESTED.replace(true) {
+        CGRequestScreenCaptureAccess();
+    } else {
+        explain_missing_access(mtm);
+    }
     false
 }
 
+fn explain_missing_access(mtm: MainThreadMarker) {
+    let alert = NSAlert::new(mtm);
+    alert.setMessageText(ns_string!("Kadro needs Screen Recording access"));
+    alert.setInformativeText(ns_string!(
+        "Turn on Kadro in System Settings → Privacy & Security → Screen & System Audio Recording, then quit and reopen Kadro."
+    ));
+    alert.addButtonWithTitle(ns_string!("Open System Settings"));
+    alert.addButtonWithTitle(ns_string!("Cancel"));
+    NSApplication::sharedApplication(mtm).activate();
+    if alert.runModal() == NSAlertFirstButtonReturn
+        && let Some(url) = NSURL::URLWithString(ns_string!(SCREEN_RECORDING_SETTINGS_URL))
+    {
+        NSWorkspace::sharedWorkspace().openURL(&url);
+    }
+}
+
 /// Снимает целиком дисплей, на котором стоит курсор.
-pub fn capture_screen() {
-    if !has_access() {
+pub fn capture_screen(mtm: MainThreadMarker) {
+    if !has_access(mtm) {
         return;
     }
     let cursor = CGEvent::location(CGEvent::new(None).as_deref());
@@ -100,7 +132,17 @@ fn with_content(f: impl Fn(&SCShareableContent) + 'static) {
     let handler = RcBlock::new(move |content: *mut SCShareableContent, error: *mut NSError| {
         match unsafe { content.as_ref() } {
             Some(content) => f(content),
-            None => report(error),
+            None => {
+                report(error);
+                // Доступ могли отозвать, пока Kadro работал.
+                if !CGPreflightScreenCaptureAccess() {
+                    DispatchQueue::main().exec_async(|| {
+                        if let Some(mtm) = MainThreadMarker::new() {
+                            explain_missing_access(mtm);
+                        }
+                    });
+                }
+            }
         }
     });
     unsafe { SCShareableContent::getShareableContentWithCompletionHandler(&handler) };
