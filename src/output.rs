@@ -19,23 +19,28 @@ use crate::settings::{Format, Settings};
 pub fn deliver(image: &CGImage, scale: f64) {
     let settings = Settings::load();
 
-    if settings.copy_to_clipboard {
-        match encode(image, Format::Png, scale) {
-            Some(png) => DispatchQueue::main().exec_async(move || copy_to_clipboard(&png)),
-            None => eprintln!("kadro: failed to encode clipboard image"),
+    let png = settings.copy_to_clipboard.then(|| encode(image, Format::Png, scale)).flatten();
+    match &png {
+        Some(png) => {
+            let png = png.clone();
+            DispatchQueue::main().exec_async(move || copy_to_clipboard(&png));
         }
+        None if settings.copy_to_clipboard => eprintln!("kadro: failed to encode clipboard image"),
+        None => {}
     }
 
     if settings.save_to_file {
         let downscaled = (settings.downscale_retina && scale > 1.0)
             .then(|| downscale(image, scale))
             .flatten();
-        let (image, scale) = match &downscaled {
-            Some(small) => (&**small, 1.0),
-            None => (image, scale),
-        };
         let format = settings.format;
-        let saved = encode(image, format, scale).ok_or_else(|| std::io::Error::other("encoding failed")).and_then(|bytes| {
+        let bytes = match (&downscaled, &png) {
+            // Тот же снимок в том же формате уже закодирован для буфера обмена.
+            (None, Some(png)) if matches!(format, Format::Png) => Some(png.clone()),
+            (Some(small), _) => encode(small, format, 1.0),
+            (None, _) => encode(image, format, scale),
+        };
+        let saved = bytes.ok_or_else(|| std::io::Error::other("encoding failed")).and_then(|bytes| {
             std::fs::create_dir_all(&settings.directory)?;
             let path = unique_path(&settings.directory, &timestamp(), format.extension());
             std::fs::write(&path, bytes).map(|_| path)

@@ -80,3 +80,21 @@ A compact native preferences window uses Space Grotesk typography and Lucide ico
 ## Architecture
 
 Keep it simple. No abstractions for features outside the MVP scope.
+
+## Building
+
+Requires macOS 14 or later, Rust, and the Xcode Command Line Tools.
+
+```sh
+./scripts/bundle.sh
+```
+
+This builds `build/Kadro.app`. Copy it to `/Applications` before turning on Launch at login.
+
+The app is signed ad-hoc unless `KADRO_SIGN_IDENTITY` names a signing identity. macOS ties Screen Recording access to the signature, so an ad-hoc build asks for access again after every rebuild.
+
+During development, `cargo run` starts Kadro without a bundle. It then inherits Screen Recording access from the terminal, and Launch at login is unavailable.
+
+## Licenses
+
+Kadro is MIT licensed. It bundles [Space Grotesk](https://github.com/floriankarsten/space-grotesk) under the SIL Open Font License (`assets/SpaceGrotesk-OFL.txt`) and [Lucide](https://lucide.dev) icons under the ISC License (`assets/icons/LICENSE`).
