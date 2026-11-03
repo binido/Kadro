@@ -1,16 +1,24 @@
+//! Глобальные сочетания клавиш через Carbon `RegisterEventHotKey`.
+//!
+//! Сочетания хранятся в `NSUserDefaults` и регистрируются заново после каждого изменения в настройках.
+
 use std::cell::RefCell;
 use std::ffi::c_void;
-use std::ptr::{NonNull, null_mut};
+use std::ptr::{self, NonNull, null_mut};
 
 use objc2::MainThreadMarker;
 use objc2::runtime::AnyObject;
 use objc2_app_kit::NSEventModifierFlags;
 use objc2_core_foundation::{CFArray, CFRetained};
-use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString, NSUserDefaults, ns_string};
+use objc2_foundation::{NSArray, NSDictionary, NSString, NSUserDefaults, ns_string};
 
+use crate::bridge::{self, number};
 use crate::{capture, overlay, pin};
 
 type OSStatus = i32;
+
+/// `noErr` из Carbon: вызов прошёл успешно.
+const NO_ERR: OSStatus = 0;
 
 #[repr(C)]
 #[derive(Default)]
@@ -59,15 +67,16 @@ unsafe extern "C" {
     fn CopySymbolicHotKeys(out: *mut *const CFArray) -> OSStatus;
 }
 
-const fn four_cc(code: &[u8; 4]) -> u32 {
-    u32::from_be_bytes(*code)
+/// Четырёхбуквенный код Carbon, как `'KDRO'` в C.
+const fn four_cc(code: [u8; 4]) -> u32 {
+    u32::from_be_bytes(code)
 }
 
-const SIGNATURE: u32 = four_cc(b"KDRO");
-const KEYBOARD_EVENT_CLASS: u32 = four_cc(b"keyb");
+const SIGNATURE: u32 = four_cc(*b"KDRO");
+const KEYBOARD_EVENT_CLASS: u32 = four_cc(*b"keyb");
 const HOT_KEY_PRESSED: u32 = 5;
-const DIRECT_OBJECT_PARAM: u32 = four_cc(b"----");
-const HOT_KEY_ID_TYPE: u32 = four_cc(b"hkid");
+const DIRECT_OBJECT_PARAM: u32 = four_cc(*b"----");
+const HOT_KEY_ID_TYPE: u32 = four_cc(*b"hkid");
 // С этим флагом регистрация падает, если сочетание уже занято другим приложением.
 const EXCLUSIVE: u32 = 1;
 
@@ -132,10 +141,9 @@ impl Shortcut {
             }
         }
         match self.key_name() {
-            Some(name) => text.push_str(name),
-            None => text.push_str(&format!("Key {}", self.key_code)),
+            Some(name) => text + name,
+            None => format!("{text}Key {}", self.key_code),
         }
-        text
     }
 
     /// Флаги модификаторов для keyEquivalent пункта меню.
@@ -262,7 +270,13 @@ thread_local! {
 /// Подключает обработчик горячих клавиш и регистрирует сохранённые сочетания.
 pub fn install() {
     let spec = EventTypeSpec { event_class: KEYBOARD_EVENT_CLASS, event_kind: HOT_KEY_PRESSED };
-    unsafe { InstallEventHandler(GetApplicationEventTarget(), handle_hot_key, 1, &spec, null_mut(), null_mut()) };
+    // SAFETY: spec живёт до конца вызова, а Carbon копирует список типов событий себе.
+    let status = unsafe {
+        InstallEventHandler(GetApplicationEventTarget(), handle_hot_key, 1, &raw const spec, null_mut(), null_mut())
+    };
+    if status != NO_ERR {
+        eprintln!("kadro: failed to install hot key handler: OSStatus {status}");
+    }
     register_all();
 }
 
@@ -281,6 +295,7 @@ pub fn register_all() {
 /// Снимает все сочетания, иначе при записи нового нажатие текущего запускало бы захват.
 pub fn unregister_all() {
     for hot_key in REGISTERED.take() {
+        // SAFETY: в REGISTERED лежат только ссылки, которые вернул успешный RegisterEventHotKey.
         unsafe { UnregisterEventHotKey(hot_key) };
     }
 }
@@ -288,6 +303,7 @@ pub fn unregister_all() {
 fn register(action: Action, shortcut: Shortcut) -> Option<*mut c_void> {
     let id = EventHotKeyID { signature: SIGNATURE, id: action.index() };
     let mut hot_key = null_mut();
+    // SAFETY: hot_key - локальная переменная, куда Carbon пишет ссылку на зарегистрированное сочетание.
     let status = unsafe {
         RegisterEventHotKey(
             shortcut.key_code,
@@ -295,10 +311,10 @@ fn register(action: Action, shortcut: Shortcut) -> Option<*mut c_void> {
             id,
             GetApplicationEventTarget(),
             EXCLUSIVE,
-            &mut hot_key,
+            &raw mut hot_key,
         )
     };
-    (status == 0).then_some(hot_key)
+    (status == NO_ERR).then_some(hot_key)
 }
 
 /// Проверяет сочетание для действия. Возвращает текст конфликта для пользователя.
@@ -312,6 +328,7 @@ pub fn conflict(action: Action, shortcut: Shortcut) -> Option<String> {
     // Пробная регистрация - единственный способ узнать, занято ли сочетание другим приложением.
     match register(action, shortcut) {
         Some(hot_key) => {
+            // SAFETY: hot_key только что вернул успешный RegisterEventHotKey.
             unsafe { UnregisterEventHotKey(hot_key) };
             None
         }
@@ -321,17 +338,17 @@ pub fn conflict(action: Action, shortcut: Shortcut) -> Option<String> {
 
 /// Включённые системные сочетания из Системных настроек -> Клавиатура.
 fn system_shortcuts() -> Vec<Shortcut> {
-    let mut list: *const CFArray = std::ptr::null();
-    if unsafe { CopySymbolicHotKeys(&mut list) } != 0 {
+    let mut list: *const CFArray = ptr::null();
+    // SAFETY: list - локальная переменная для выходного параметра.
+    if unsafe { CopySymbolicHotKeys(&raw mut list) } != NO_ERR {
         return Vec::new();
     }
+    // SAFETY: по правилу Copy из Core Foundation владение массивом переходит к нам.
     let Some(list) = NonNull::new(list.cast_mut()).map(|p| unsafe { CFRetained::from_raw(p) }) else {
         return Vec::new();
     };
-    // CFArray и NSArray взаимозаменяемы без копирования.
-    let list: &NSArray<NSDictionary<NSString, AnyObject>> = unsafe { &*(&*list as *const CFArray).cast() };
-    let number =
-        |info: &NSDictionary<NSString, AnyObject>, key: &NSString| info.objectForKey(key)?.downcast::<NSNumber>().ok();
+    // SAFETY: CFArray и NSArray взаимозаменяемы, а элементы массива - словари с описанием сочетаний.
+    let list: &NSArray<NSDictionary<NSString, AnyObject>> = unsafe { bridge::toll_free(&*list) };
     list.iter()
         .filter_map(|info| {
             if !number(&info, ns_string!("kHISymbolicHotKeyEnabled"))?.boolValue() {
@@ -348,6 +365,7 @@ fn system_shortcuts() -> Vec<Shortcut> {
 
 extern "C" fn handle_hot_key(_call: *mut c_void, event: *mut c_void, _data: *mut c_void) -> OSStatus {
     let mut id = EventHotKeyID::default();
+    // SAFETY: event пришёл от Carbon, а буфер id нужного размера и типа для параметра hkid.
     let status = unsafe {
         GetEventParameter(
             event,
@@ -356,14 +374,15 @@ extern "C" fn handle_hot_key(_call: *mut c_void, event: *mut c_void, _data: *mut
             null_mut(),
             size_of::<EventHotKeyID>(),
             null_mut(),
-            (&mut id as *mut EventHotKeyID).cast(),
+            ptr::from_mut(&mut id).cast(),
         )
     };
     // Carbon вызывает обработчик на главном потоке, из цикла событий NSApplication.
-    if let (0, Some(action), Some(mtm)) = (status, Action::ALL.get(id.id as usize), MainThreadMarker::new()) {
+    let action = usize::try_from(id.id).ok().and_then(|index| Action::ALL.get(index));
+    if let (NO_ERR, Some(action), Some(mtm)) = (status, action, MainThreadMarker::new()) {
         action.run(mtm);
     }
-    0
+    NO_ERR
 }
 
 #[cfg(test)]

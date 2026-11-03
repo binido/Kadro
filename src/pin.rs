@@ -1,3 +1,6 @@
+//! Закреплённые снимки: плавающие окна поверх остальных, которые можно двигать и масштабировать.
+
+use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 
@@ -9,16 +12,15 @@ use objc2_app_kit::{
     NSEventModifierFlags, NSGraphicsContext, NSMenu, NSMenuItem, NSPanel, NSResponder, NSScreen, NSView, NSWindow,
     NSWindowStyleMask,
 };
-use objc2_core_foundation::{CFData, CFDictionary, CFRetained};
+use objc2_core_foundation::{CFData, CFRetained};
 use objc2_core_graphics::{CGContext, CGImage, CGInterpolationQuality};
-use objc2_foundation::{NSDictionary, NSNumber, NSObject, NSPoint, NSRect, NSSize, NSString, ns_string};
+use objc2_foundation::{NSDictionary, NSObject, NSPoint, NSRect, NSSize, NSString, ns_string};
 use objc2_image_io::{CGImageSource, kCGImagePropertyDPIWidth};
 
+use crate::bridge::{self, number};
 use crate::capture::Shot;
-use crate::{output, preview};
+use crate::{geometry, keys, output, preview};
 
-const ESCAPE_KEY: u16 = 53;
-const C_KEY: u16 = 8;
 const ZOOMS: [f64; 3] = [0.5, 1.0, 2.0];
 const TRANSLUCENT_ALPHA: f64 = 0.5;
 
@@ -90,7 +92,7 @@ define_class!(
 
         #[unsafe(method(keyDown:))]
         fn key_down(&self, event: &NSEvent) {
-            if event.keyCode() == ESCAPE_KEY {
+            if event.keyCode() == keys::ESCAPE {
                 self.close();
             } else {
                 unsafe { msg_send![super(self), keyDown: event] }
@@ -100,7 +102,7 @@ define_class!(
         #[unsafe(method(performKeyEquivalent:))]
         fn perform_key_equivalent(&self, event: &NSEvent) -> bool {
             let command = event.modifierFlags().contains(NSEventModifierFlags::Command);
-            if command && event.keyCode() == C_KEY {
+            if command && event.keyCode() == keys::C {
                 self.copy();
                 true
             } else {
@@ -144,10 +146,7 @@ define_class!(
 
 impl PinView {
     fn copy(&self) {
-        let (image, scale) = (self.ivars().image.clone(), self.ivars().scale);
-        preview::in_background(move || {
-            output::copy(&image, scale);
-        });
+        output::copy_in_background(self.ivars().image.clone(), self.ivars().scale);
     }
 
     fn close(&self) {
@@ -211,10 +210,9 @@ pub fn open(mtm: MainThreadMarker, image: CFRetained<CGImage>, scale: f64, place
     let screens = NSScreen::screens(mtm);
     let cocoa_place = place.map(|r| preview::to_cocoa(mtm, r));
     let mouse = NSEvent::mouseLocation();
-    let anchor =
-        cocoa_place.map_or(mouse, |r| NSPoint::new(r.origin.x + r.size.width / 2.0, r.origin.y + r.size.height / 2.0));
+    let anchor = cocoa_place.map_or(mouse, geometry::center);
     let Some(screen) =
-        screens.iter().find(|s| crate::capture::contains(s.frame(), anchor)).or_else(|| NSScreen::mainScreen(mtm))
+        screens.iter().find(|s| geometry::contains(s.frame(), anchor)).or_else(|| NSScreen::mainScreen(mtm))
     else {
         return;
     };
@@ -262,19 +260,12 @@ fn last_path() -> PathBuf {
 
 /// Запоминает последний снимок на диске, а не в памяти, чтобы Kadro в простое не держал десятки мегабайт.
 pub fn remember(image: &CGImage, scale: f64, png: Option<&[u8]>) {
-    let encoded;
-    let bytes = match png {
-        Some(png) => png,
-        None => match output::encode_png(image, scale) {
-            Some(png) => {
-                encoded = png;
-                &encoded
-            }
-            None => return,
-        },
+    // PNG для буфера обмена уже готов, кодировать второй раз незачем.
+    let Some(bytes) = png.map(Cow::Borrowed).or_else(|| output::encode_png(image, scale).map(Cow::Owned)) else {
+        return;
     };
     let path = last_path();
-    let written = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|_| std::fs::write(&path, bytes));
+    let written = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(&path, bytes));
     if let Err(err) = written {
         eprintln!("kadro: failed to remember last screenshot: {err}");
     }
@@ -304,12 +295,11 @@ fn decode(bytes: &[u8]) -> Option<(CFRetained<CGImage>, f64)> {
     let source = unsafe { CGImageSource::with_data(&CFData::from_bytes(bytes), None) }?;
     let image = unsafe { source.image_at_index(0, None) }?;
     let properties = unsafe { source.properties_at_index(0, None) }?;
-    // CFDictionary и NSDictionary взаимозаменяемы без копирования.
-    let properties: &NSDictionary<NSString, AnyObject> =
-        unsafe { &*(&*properties as *const CFDictionary as *const NSDictionary<NSString, AnyObject>) };
-    let key: &NSString = unsafe { &*(kCGImagePropertyDPIWidth as *const _ as *const NSString) };
-    let dpi =
-        properties.objectForKey(key).and_then(|n| n.downcast::<NSNumber>().ok()).map_or(72.0, |n| n.doubleValue());
+    // SAFETY: свойства изображения - словарь со строковыми ключами, CFDictionary и NSDictionary взаимозаменяемы.
+    let properties: &NSDictionary<NSString, AnyObject> = unsafe { bridge::toll_free(&*properties) };
+    // SAFETY: ключ - константа ImageIO типа CFString, а CFString и NSString взаимозаменяемы.
+    let key: &NSString = unsafe { bridge::toll_free(kCGImagePropertyDPIWidth) };
+    let dpi = number(properties, key).map_or(72.0, |n| n.doubleValue());
     Some((image, (dpi / 72.0).max(1.0)))
 }
 

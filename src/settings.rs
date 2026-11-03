@@ -1,3 +1,5 @@
+//! Пользовательские настройки Kadro, которые хранятся в `NSUserDefaults`.
+
 use std::path::PathBuf;
 
 use objc2_foundation::{NSNumber, NSString, NSUserDefaults};
@@ -16,6 +18,25 @@ pub const CONFIRMATION: &str = "confirmation";
 
 pub const DEFAULT_FILE_NAME_TEMPLATE: &str = "Kadro {date} at {time}";
 
+/// Настройка с выбором из нескольких вариантов: хранится строкой и показывается радиокнопками.
+pub trait Choice: Copy + PartialEq + 'static {
+    /// Ключ настройки в `NSUserDefaults`.
+    const DEFAULTS_KEY: &'static str;
+    /// Все варианты в порядке радиокнопок в настройках.
+    const ALL: &'static [Self];
+
+    /// Подпись радиокнопки.
+    fn title(self) -> &'static str;
+
+    /// Значение варианта в `NSUserDefaults`.
+    fn key(self) -> &'static str;
+
+    /// Вариант по сохранённому значению. `None`, если значение незнакомо.
+    fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|choice| choice.key() == key)
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Format {
     Png,
@@ -26,27 +47,6 @@ pub enum Format {
 }
 
 impl Format {
-    pub const ALL: [Format; 4] = [Format::Png, Format::Jpeg, Format::Heic, Format::Auto];
-
-    pub fn title(self) -> &'static str {
-        match self {
-            Format::Png => "PNG",
-            Format::Jpeg => "JPEG",
-            Format::Heic => "HEIC",
-            Format::Auto => "Auto",
-        }
-    }
-
-    /// Значение формата в NSUserDefaults.
-    pub fn key(self) -> &'static str {
-        match self {
-            Format::Png => "png",
-            Format::Jpeg => "jpeg",
-            Format::Heic => "heic",
-            Format::Auto => "auto",
-        }
-    }
-
     // Auto заменяется на PNG или JPEG до кодирования, поэтому у него нет своего типа и расширения.
     pub fn uti(self) -> &'static str {
         match self {
@@ -65,6 +65,29 @@ impl Format {
     }
 }
 
+impl Choice for Format {
+    const DEFAULTS_KEY: &'static str = FORMAT;
+    const ALL: &'static [Self] = &[Format::Png, Format::Jpeg, Format::Heic, Format::Auto];
+
+    fn title(self) -> &'static str {
+        match self {
+            Format::Png => "PNG",
+            Format::Jpeg => "JPEG",
+            Format::Heic => "HEIC",
+            Format::Auto => "Auto",
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            Format::Png => "png",
+            Format::Jpeg => "jpeg",
+            Format::Heic => "heic",
+            Format::Auto => "auto",
+        }
+    }
+}
+
 /// Показывать ли курсор на снимке.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Cursor {
@@ -74,10 +97,11 @@ pub enum Cursor {
     Hide,
 }
 
-impl Cursor {
-    pub const ALL: [Cursor; 3] = [Cursor::Auto, Cursor::Show, Cursor::Hide];
+impl Choice for Cursor {
+    const DEFAULTS_KEY: &'static str = CURSOR;
+    const ALL: &'static [Self] = &[Cursor::Auto, Cursor::Show, Cursor::Hide];
 
-    pub fn title(self) -> &'static str {
+    fn title(self) -> &'static str {
         match self {
             Cursor::Auto => "Auto",
             Cursor::Show => "Show",
@@ -85,7 +109,7 @@ impl Cursor {
         }
     }
 
-    pub fn key(self) -> &'static str {
+    fn key(self) -> &'static str {
         match self {
             Cursor::Auto => "auto",
             Cursor::Show => "show",
@@ -103,17 +127,18 @@ pub enum PreviewHiding {
     Manual,
 }
 
-impl PreviewHiding {
-    pub const ALL: [PreviewHiding; 2] = [PreviewHiding::Auto, PreviewHiding::Manual];
+impl Choice for PreviewHiding {
+    const DEFAULTS_KEY: &'static str = PREVIEW_HIDING;
+    const ALL: &'static [Self] = &[PreviewHiding::Auto, PreviewHiding::Manual];
 
-    pub fn title(self) -> &'static str {
+    fn title(self) -> &'static str {
         match self {
             PreviewHiding::Auto => "Automatically",
             PreviewHiding::Manual => "Manually",
         }
     }
 
-    pub fn key(self) -> &'static str {
+    fn key(self) -> &'static str {
         match self {
             PreviewHiding::Auto => "auto",
             PreviewHiding::Manual => "manual",
@@ -131,10 +156,11 @@ pub enum Confirmation {
     None,
 }
 
-impl Confirmation {
-    pub const ALL: [Confirmation; 3] = [Confirmation::Popup, Confirmation::Notification, Confirmation::None];
+impl Choice for Confirmation {
+    const DEFAULTS_KEY: &'static str = CONFIRMATION;
+    const ALL: &'static [Self] = &[Confirmation::Popup, Confirmation::Notification, Confirmation::None];
 
-    pub fn title(self) -> &'static str {
+    fn title(self) -> &'static str {
         match self {
             Confirmation::Popup => "Pop-up",
             Confirmation::Notification => "Notification",
@@ -142,7 +168,7 @@ impl Confirmation {
         }
     }
 
-    pub fn key(self) -> &'static str {
+    fn key(self) -> &'static str {
         match self {
             Confirmation::Popup => "popup",
             Confirmation::Notification => "notification",
@@ -151,7 +177,7 @@ impl Confirmation {
     }
 }
 
-/// Пользовательские настройки из NSUserDefaults.
+/// Пользовательские настройки из `NSUserDefaults`.
 pub struct Settings {
     pub copy_to_clipboard: bool,
     pub save_to_file: bool,
@@ -168,54 +194,45 @@ pub struct Settings {
 impl Settings {
     /// Читает настройки, подставляя значения по умолчанию для отсутствующих ключей.
     pub fn load() -> Self {
-        let defaults = NSUserDefaults::standardUserDefaults();
-        let flag = |key: &str, default: bool| {
-            let key = NSString::from_str(key);
-            match defaults.objectForKey(&key) {
-                Some(_) => defaults.boolForKey(&key),
-                None => default,
-            }
-        };
-
-        let save_to_file = flag(SAVE_TO_FILE, true);
-        let show_preview = flag(SHOW_PREVIEW, true);
+        let save_to_file = flag(SAVE_TO_FILE).unwrap_or(true);
+        let show_preview = flag(SHOW_PREVIEW).unwrap_or(true);
         // Хотя бы одно действие после снимка включено всегда, иначе снимок пропадёт.
-        let copy_to_clipboard = flag(COPY_TO_CLIPBOARD, true) || (!save_to_file && !show_preview);
-        let format =
-            string(FORMAT).and_then(|key| Format::ALL.into_iter().find(|f| f.key() == key)).unwrap_or(Format::Png);
+        let copy_to_clipboard = flag(COPY_TO_CLIPBOARD).unwrap_or(true) || (!save_to_file && !show_preview);
         let directory = string(DIRECTORY)
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join("Desktop"));
-        let cursor =
-            string(CURSOR).and_then(|key| Cursor::ALL.into_iter().find(|c| c.key() == key)).unwrap_or(Cursor::Auto);
+            .map_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join("Desktop"), PathBuf::from);
         let file_name_template = string(FILE_NAME_TEMPLATE)
-            .filter(|t| !t.trim().is_empty())
+            .filter(|template| !template.trim().is_empty())
             .unwrap_or_else(|| DEFAULT_FILE_NAME_TEMPLATE.into());
-
-        let preview_hiding = string(PREVIEW_HIDING)
-            .and_then(|key| PreviewHiding::ALL.into_iter().find(|h| h.key() == key))
-            .unwrap_or(PreviewHiding::Auto);
-        let confirmation = string(CONFIRMATION)
-            .and_then(|key| Confirmation::ALL.into_iter().find(|c| c.key() == key))
-            .unwrap_or(Confirmation::Popup);
 
         Settings {
             copy_to_clipboard,
             save_to_file,
-            format,
+            format: choice().unwrap_or(Format::Png),
             directory,
-            downscale_retina: flag(DOWNSCALE_RETINA, false),
-            cursor,
+            downscale_retina: flag(DOWNSCALE_RETINA).unwrap_or(false),
+            cursor: choice().unwrap_or(Cursor::Auto),
             file_name_template,
             show_preview,
-            preview_hiding,
-            confirmation,
+            preview_hiding: choice().unwrap_or(PreviewHiding::Auto),
+            confirmation: choice().unwrap_or(Confirmation::Popup),
         }
     }
 }
 
+/// Сохранённый флаг. `None`, если пользователь его ещё не менял.
+fn flag(key: &str) -> Option<bool> {
+    let defaults = NSUserDefaults::standardUserDefaults();
+    let key = NSString::from_str(key);
+    defaults.objectForKey(&key).map(|_| defaults.boolForKey(&key))
+}
+
 pub fn string(key: &str) -> Option<String> {
     NSUserDefaults::standardUserDefaults().stringForKey(&NSString::from_str(key)).map(|s| s.to_string())
+}
+
+/// Сохранённый вариант настройки. `None`, если его нет или значение незнакомо.
+pub fn choice<T: Choice>() -> Option<T> {
+    string(T::DEFAULTS_KEY).and_then(|key| T::from_key(&key))
 }
 
 pub fn set_flag(key: &str, value: bool) {
@@ -226,4 +243,32 @@ pub fn set_flag(key: &str, value: bool) {
 pub fn set_string(key: &str, value: &str) {
     let key = NSString::from_str(key);
     unsafe { NSUserDefaults::standardUserDefaults().setObject_forKey(Some(&NSString::from_str(value)), &key) };
+}
+
+pub fn set_choice<T: Choice>(choice: T) {
+    set_string(T::DEFAULTS_KEY, choice.key());
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::*;
+
+    fn assert_keys_round_trip<T: Choice + std::fmt::Debug>() {
+        let keys: HashSet<_> = T::ALL.iter().map(|choice| choice.key()).collect();
+        assert_eq!(keys.len(), T::ALL.len(), "keys of {} must be unique", T::DEFAULTS_KEY);
+        for choice in T::ALL {
+            assert_eq!(T::from_key(choice.key()), Some(*choice));
+        }
+        assert_eq!(T::from_key("unknown"), None);
+    }
+
+    #[test]
+    fn every_choice_is_restored_from_its_stored_key() {
+        assert_keys_round_trip::<Format>();
+        assert_keys_round_trip::<Cursor>();
+        assert_keys_round_trip::<PreviewHiding>();
+        assert_keys_round_trip::<Confirmation>();
+    }
 }

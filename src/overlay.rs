@@ -1,3 +1,5 @@
+//! Оверлей поверх всех экранов: выделение области с лупой или выбор окна мышью.
+
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
@@ -19,13 +21,9 @@ use objc2_core_graphics::{
 };
 use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSObject, NSPoint, NSRect, NSSize, NSString, ns_string};
 
-use crate::{assets, capture};
+use crate::bridge::{self, number};
+use crate::{assets, capture, geometry, keys};
 
-const ESCAPE_KEY: u16 = 53;
-const LEFT_KEY: u16 = 123;
-const RIGHT_KEY: u16 = 124;
-const DOWN_KEY: u16 = 125;
-const UP_KEY: u16 = 126;
 /// Сторона лупы в точках и сколько пикселей снимка в ней видно по каждой оси.
 const LOUPE_SIZE: f64 = 120.0;
 const LOUPE_PIXELS: f64 = 15.0;
@@ -204,11 +202,11 @@ define_class!(
         fn key_down(&self, event: &NSEvent) {
             let step = if event.modifierFlags().contains(NSEventModifierFlags::Shift) { 10.0 } else { 1.0 };
             let delta = match event.keyCode() {
-                ESCAPE_KEY => return close(),
-                LEFT_KEY => NSPoint::new(-step, 0.0),
-                RIGHT_KEY => NSPoint::new(step, 0.0),
-                DOWN_KEY => NSPoint::new(0.0, -step),
-                UP_KEY => NSPoint::new(0.0, step),
+                keys::ESCAPE => return close(),
+                keys::LEFT => NSPoint::new(-step, 0.0),
+                keys::RIGHT => NSPoint::new(step, 0.0),
+                keys::DOWN => NSPoint::new(0.0, -step),
+                keys::UP => NSPoint::new(0.0, step),
                 _ => return,
             };
             // Стрелки двигают угол, который тянет мышь, поэтому работают только во время протягивания.
@@ -286,7 +284,7 @@ impl SelectionView {
             text.drawAtPoint_withAttributes(
                 NSPoint::new(origin.x + padding.width, origin.y + padding.height),
                 Some(&attributes),
-            )
+            );
         };
     }
 
@@ -409,7 +407,7 @@ pub fn select(mtm: MainThreadMarker, mode: Mode) {
         NSScreen::screens(mtm).iter().map(|screen| overlay_window(mtm, &screen)).unzip();
     NSApplication::sharedApplication(mtm).activate();
     for window in &windows {
-        if capture::contains(window.frame(), mouse) {
+        if geometry::contains(window.frame(), mouse) {
             window.makeKeyAndOrderFront(None);
         } else {
             window.orderFrontRegardless();
@@ -435,7 +433,7 @@ fn track_pointer() {
             let pointer = view
                 .window()
                 .map(|w| w.frame())
-                .filter(|f| capture::contains(*f, mouse))
+                .filter(|f| geometry::contains(*f, mouse))
                 .map(|f| NSPoint::new(mouse.x - f.origin.x, mouse.y - f.origin.y));
             if pointer.is_some() || view.ivars().pointer.get().is_some() {
                 view.ivars().pointer.set(pointer);
@@ -447,7 +445,7 @@ fn track_pointer() {
 
 /// Принимает снимок дисплея для лупы. Если оверлей уже закрыт, снимок не нужен.
 pub fn show_frozen(display: CGDirectDisplayID, image: CFRetained<CGImage>) {
-    if WINDOWS.with_borrow(|w| w.is_empty()) {
+    if WINDOWS.with_borrow(Vec::is_empty) {
         return;
     }
     FROZEN.with_borrow_mut(|frozen| frozen.insert(display, image));
@@ -498,11 +496,9 @@ pub fn on_screen_windows() -> Vec<TargetWindow> {
     let Some(list) = CGWindowListCopyWindowInfo(options, kCGNullWindowID) else {
         return Vec::new();
     };
-    // CFArray и NSArray взаимозаменяемы без копирования.
-    let list: &NSArray<NSDictionary<NSString, AnyObject>> = unsafe { &*(&*list as *const _ as *const _) };
-    let own_pid = std::process::id() as i32;
-    let number =
-        |info: &NSDictionary<NSString, AnyObject>, key: &NSString| info.objectForKey(key)?.downcast::<NSNumber>().ok();
+    // SAFETY: CFArray и NSArray взаимозаменяемы, а элементы списка окон - словари с их описанием.
+    let list: &NSArray<NSDictionary<NSString, AnyObject>> = unsafe { bridge::toll_free(&*list) };
+    let own_pid = capture::own_pid();
 
     list.iter()
         .filter_map(|info| {
@@ -517,8 +513,9 @@ pub fn on_screen_windows() -> Vec<TargetWindow> {
             }
             let bounds = info.objectForKey(ns_string!("kCGWindowBounds"))?;
             let mut frame = CGRect::default();
-            let bounds: &CFDictionary = unsafe { &*(&*bounds as *const AnyObject as *const CFDictionary) };
-            unsafe { CGRectMakeWithDictionaryRepresentation(Some(bounds), &mut frame) }.then_some(())?;
+            // SAFETY: kCGWindowBounds - словарь с x, y, Width и Height, а NSDictionary и CFDictionary взаимозаменяемы.
+            let bounds: &CFDictionary = unsafe { bridge::toll_free(&*bounds) };
+            unsafe { CGRectMakeWithDictionaryRepresentation(Some(bounds), &raw mut frame) }.then_some(())?;
             let id = number(&info, ns_string!("kCGWindowNumber"))?.unsignedIntValue();
             Some(TargetWindow { id, pid, frame })
         })
@@ -527,7 +524,7 @@ pub fn on_screen_windows() -> Vec<TargetWindow> {
 
 fn window_under_cursor() -> Option<TargetWindow> {
     let cursor = CGEvent::location(CGEvent::new(None).as_deref());
-    TARGETS.with_borrow(|targets| targets.iter().copied().find(|t| capture::contains(t.frame, cursor)))
+    TARGETS.with_borrow(|targets| targets.iter().copied().find(|t| geometry::contains(t.frame, cursor)))
 }
 
 fn update_hover() {

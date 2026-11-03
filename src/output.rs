@@ -1,9 +1,11 @@
+//! Что происходит со снимком после захвата: буфер обмена, файл и метаданные Finder.
+
 use std::collections::HashSet;
 use std::ffi::{CString, c_char, c_int, c_void};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
-use dispatch2::DispatchQueue;
+use dispatch2::{DispatchQoS, DispatchQueue, GlobalQueueIdentifier};
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
@@ -65,6 +67,18 @@ pub fn deliver(image: &CGImage, scale: f64, shot: &Shot) {
     });
 }
 
+/// Выполняет работу с файлами и кодированием вне главного потока, чтобы интерфейс не замирал.
+pub fn in_background(work: impl FnOnce() + Send + 'static) {
+    DispatchQueue::global_queue(GlobalQueueIdentifier::QualityOfService(DispatchQoS::UserInitiated)).exec_async(work);
+}
+
+/// Кодирует и кладёт снимок в буфер обмена в фоне.
+pub fn copy_in_background(image: CFRetained<CGImage>, scale: f64) {
+    in_background(move || {
+        copy(&image, scale);
+    });
+}
+
 /// Кладёт снимок в буфер обмена как PNG. Возвращает закодированные байты, чтобы их не кодировать второй раз.
 pub fn copy(image: &CGImage, scale: f64) -> Option<Vec<u8>> {
     let Some(png) = encode(image, Format::Png, scale) else {
@@ -98,7 +112,7 @@ pub fn save(
         (Some(small), _) => encode(small, format, 1.0),
         (None, _) => encode(image, format, scale),
     };
-    let bytes = bytes.ok_or_else(|| std::io::Error::other("encoding failed"))?;
+    let bytes = bytes.ok_or_else(|| std::io::Error::other(format!("{} encoding failed", format.extension())))?;
     std::fs::create_dir_all(directory)?;
     let (date, time) = (now("yyyy-MM-dd"), now("HH.mm.ss"));
     let name = file_name(&settings.file_name_template, &date, &time, shot);
