@@ -62,6 +62,8 @@ A compact native preferences window uses Space Grotesk typography and Lucide ico
 7. Multi-monitor support, permissions, and Retina handling
 8. Performance optimization and packaging
 
+These stages make up version 0.1. Versions up to 1.0 are planned in [ROADMAP.md](ROADMAP.md).
+
 ## Architecture
 
 Keep it simple.
