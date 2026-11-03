@@ -34,8 +34,8 @@ A version is done when all of these hold:
 
 | Version | Feature | Status |
 |---|---|---|
-| 0.1 | Capture utility | Released as a draft |
-| 0.2 | Capture modes and precision | Planned |
+| 0.1 | Capture utility | Done |
+| 0.2 | Capture modes and precision | Done |
 | 0.3 | After-capture preview | Planned |
 | 0.4 | Pinned screenshots | Planned |
 | 0.5 | Editor foundation | Planned |
@@ -64,7 +64,7 @@ Update the status column in the PR that ships each version.
 - Launch at login, multiple displays, Screen Recording permission guidance.
 - Signed app bundle, DMG installer, release workflow on version tags.
 
-## 0.2 — Capture modes and precision
+## 0.2 — Capture modes and precision (shipped)
 
 **Goal:** every way of taking a screenshot exists before anything is built on top of the result.
 

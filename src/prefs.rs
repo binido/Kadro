@@ -1,21 +1,22 @@
 use std::cell::{Cell, OnceCell, RefCell};
 
 use objc2::rc::Retained;
-use objc2::runtime::AnyObject;
+use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
 use objc2_app_kit::{
     NSAlert, NSApplication, NSBeep, NSBox, NSBoxType, NSButton, NSCellImagePosition, NSColor, NSControl,
-    NSControlStateValueOff, NSControlStateValueOn, NSEvent, NSEventModifierFlags, NSGridCell,
+    NSControlStateValueOff, NSControlStateValueOn, NSControlTextEditingDelegate, NSEvent, NSEventModifierFlags, NSGridCell,
     NSGridCellPlacement, NSGridView, NSLineBreakMode, NSModalResponseOK, NSOpenPanel, NSResponder,
-    NSStackView, NSTabViewController, NSTabViewControllerTabStyle, NSTabViewItem, NSTextField, NSView,
+    NSStackView, NSTabViewController, NSTabViewControllerTabStyle, NSTabViewItem, NSTextField,
+    NSTextFieldDelegate, NSView,
     NSViewController, NSWindow, NSWindowStyleMask, NSWindowToolbarStyle, NSWorkspace,
 };
-use objc2_foundation::{ns_string, NSArray, NSObject, NSPoint, NSRange, NSRect, NSSize, NSString, NSURL};
+use objc2_foundation::{ns_string, NSArray, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRange, NSRect, NSSize, NSString, NSURL};
 use objc2_service_management::{SMAppService, SMAppServiceStatus};
 
 use crate::assets;
 use crate::hotkeys::{self, Action, Shortcut};
-use crate::settings::{self, Format, Settings};
+use crate::settings::{self, Cursor, Format, Settings, DEFAULT_FILE_NAME_TEMPLATE};
 
 const MARGIN: f64 = 24.0;
 const FIELD_WIDTH: f64 = 240.0;
@@ -43,6 +44,20 @@ define_class!(
     #[ivars = ControllerIvars]
     struct Controller;
 
+    unsafe impl NSObjectProtocol for Controller {}
+
+    unsafe impl NSControlTextEditingDelegate for Controller {
+        // Шаблон имени сохраняется на каждое изменение, отдельной кнопки нет.
+        #[unsafe(method(controlTextDidChange:))]
+        fn control_text_did_change(&self, notification: &NSNotification) {
+            if let Some(field) = notification.object().and_then(|o| o.downcast::<NSTextField>().ok()) {
+                settings::set_string(settings::FILE_NAME_TEMPLATE, &field.stringValue().to_string());
+            }
+        }
+    }
+
+    unsafe impl NSTextFieldDelegate for Controller {}
+
     impl Controller {
         #[unsafe(method(toggleDestination:))]
         fn toggle_destination(&self, _sender: &NSButton) {
@@ -56,6 +71,13 @@ define_class!(
         fn change_format(&self, sender: &NSButton) {
             if let Some(format) = Format::ALL.get(sender.tag() as usize) {
                 settings::set_string(settings::FORMAT, format.key());
+            }
+        }
+
+        #[unsafe(method(changeCursor:))]
+        fn change_cursor(&self, sender: &NSButton) {
+            if let Some(cursor) = Cursor::ALL.get(sender.tag() as usize) {
+                settings::set_string(settings::CURSOR, cursor.key());
             }
         }
 
@@ -321,25 +343,29 @@ fn general_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSVie
     directory.widthAnchor().constraintEqualToConstant(FIELD_WIDTH).setActive(true);
     let _ = controller.ivars().directory.set(directory.clone());
 
-    let formats: Vec<_> = Format::ALL
-        .iter()
-        .enumerate()
-        .map(|(index, format)| {
-            // Радиокнопки с общим action и общим родителем AppKit сам связывает в группу.
-            let radio = unsafe {
-                NSButton::radioButtonWithTitle_target_action(
-                    &NSString::from_str(format.title()),
-                    Some(controller),
-                    Some(sel!(changeFormat:)),
-                    mtm,
-                )
-            };
-            radio.setTag(index as isize);
-            radio.setState(state(format.key() == current.format.key()));
-            radio.setFont(Some(&assets::font(FONT_SIZE)));
-            view(&radio)
-        })
-        .collect();
+    let formats = radios(
+        mtm,
+        Format::ALL.map(Format::title),
+        Format::ALL.iter().position(|f| *f == current.format),
+        controller,
+        sel!(changeFormat:),
+    );
+    let cursor = radios(
+        mtm,
+        Cursor::ALL.map(Cursor::title),
+        Cursor::ALL.iter().position(|c| *c == current.cursor),
+        controller,
+        sel!(changeCursor:),
+    );
+
+    let file_name = NSTextField::textFieldWithString(&NSString::from_str(&current.file_name_template), mtm);
+    file_name.setPlaceholderString(Some(&NSString::from_str(DEFAULT_FILE_NAME_TEMPLATE)));
+    file_name.setFont(Some(&assets::font(FONT_SIZE)));
+    file_name.widthAnchor().constraintEqualToConstant(FIELD_WIDTH).setActive(true);
+    // Делегат не удерживается полем, контроллер живёт в CONTROLLER.
+    unsafe { file_name.setDelegate(Some(ProtocolObject::from_ref(controller))) };
+    let tokens = label(mtm, "{date} {time} {mode} {app}");
+    tokens.setTextColor(Some(&NSColor::secondaryLabelColor()));
 
     let copy = checkbox(mtm, "Copy", current.copy_to_clipboard, controller, sel!(toggleDestination:));
     let save = checkbox(mtm, "Save", current.save_to_file, controller, sel!(toggleDestination:));
@@ -352,8 +378,12 @@ fn general_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSVie
 
     grid(mtm, vec![
         Row::Field("Screenshots folder".into(), view(&directory)),
+        Row::Field("File name".into(), view(&file_name)),
+        Row::Field(String::new(), view(&tokens)),
         Row::Field("Save format".into(), inline(mtm, &formats)),
         Row::Field("Resize retina screenshots".into(), view(&downscale)),
+        Row::Separator,
+        Row::Field("Cursor in screenshots".into(), inline(mtm, &cursor)),
         Row::Separator,
         Row::Field("Autostart".into(), view(&login)),
         Row::Field("After screenshot".into(), inline(mtm, &[view(&copy), view(&save)])),
@@ -475,6 +505,30 @@ fn checkbox(mtm: MainThreadMarker, title: &str, on: bool, target: &Controller, a
     button.setState(state(on));
     button.setFont(Some(&assets::font(FONT_SIZE)));
     button
+}
+
+/// Радиокнопки в одну строку. Tag каждой - её номер в списке.
+fn radios<const N: usize>(
+    mtm: MainThreadMarker,
+    titles: [&str; N],
+    selected: Option<usize>,
+    target: &Controller,
+    action: objc2::runtime::Sel,
+) -> Vec<Retained<NSView>> {
+    titles
+        .iter()
+        .enumerate()
+        .map(|(index, title)| {
+            // Радиокнопки с общим action и общим родителем AppKit сам связывает в группу.
+            let radio = unsafe {
+                NSButton::radioButtonWithTitle_target_action(&NSString::from_str(title), Some(target), Some(action), mtm)
+            };
+            radio.setTag(index as isize);
+            radio.setState(state(selected == Some(index)));
+            radio.setFont(Some(&assets::font(FONT_SIZE)));
+            view(&radio)
+        })
+        .collect()
 }
 
 fn view(view: &NSView) -> Retained<NSView> {

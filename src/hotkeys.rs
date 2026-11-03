@@ -165,46 +165,72 @@ impl Shortcut {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Action {
-    Screen,
     Region,
+    RepeatRegion,
+    Screen,
+    DelayedScreen,
     Window,
+    ActiveWindow,
 }
 
 impl Action {
-    pub const ALL: [Action; 3] = [Action::Screen, Action::Region, Action::Window];
+    /// Порядок пунктов в меню и строк в настройках.
+    pub const ALL: [Action; 6] = [
+        Action::Region,
+        Action::RepeatRegion,
+        Action::Screen,
+        Action::DelayedScreen,
+        Action::Window,
+        Action::ActiveWindow,
+    ];
 
     pub fn title(self) -> &'static str {
         match self {
-            Action::Screen => "Capture Full Screen",
             Action::Region => "Capture Region",
+            Action::RepeatRegion => "Repeat Last Region",
+            Action::Screen => "Capture Full Screen",
+            Action::DelayedScreen => "Capture Full Screen in 3 s",
             Action::Window => "Capture Window",
+            Action::ActiveWindow => "Capture Active Window",
         }
     }
 
     pub fn run(self, mtm: MainThreadMarker) {
         match self {
-            Action::Screen => capture::capture_screen(mtm),
             Action::Region => overlay::select(mtm, overlay::Mode::Region),
+            Action::RepeatRegion => capture::repeat_area(mtm),
+            Action::Screen => capture::capture_screen(mtm),
+            Action::DelayedScreen => capture::capture_delayed(mtm),
             Action::Window => overlay::select(mtm, overlay::Mode::Window),
+            Action::ActiveWindow => capture::capture_active_window(mtm),
         }
+    }
+
+    /// Номер действия для Carbon, по нему обработчик находит действие в ALL.
+    fn index(self) -> u32 {
+        Action::ALL.iter().position(|a| *a == self).unwrap_or(0) as u32
     }
 
     fn defaults_key(self) -> &'static str {
         match self {
-            Action::Screen => "shortcutScreen",
             Action::Region => "shortcutRegion",
+            Action::RepeatRegion => "shortcutRepeatRegion",
+            Action::Screen => "shortcutScreen",
+            Action::DelayedScreen => "shortcutDelayedScreen",
             Action::Window => "shortcutWindow",
+            Action::ActiveWindow => "shortcutActiveWindow",
         }
     }
 
-    fn default_shortcut(self) -> Shortcut {
+    fn default_shortcut(self) -> Option<Shortcut> {
         // ⌃⇧1, ⌃⇧2, ⌃⇧3 - системные ⌘⇧3 и ⌘⇧4 остаются за macOS.
         let key_code = match self {
             Action::Screen => 18,
             Action::Region => 19,
             Action::Window => 20,
+            Action::RepeatRegion | Action::DelayedScreen | Action::ActiveWindow => return None,
         };
-        Shortcut { key_code, modifiers: CONTROL | SHIFT }
+        Some(Shortcut { key_code, modifiers: CONTROL | SHIFT })
     }
 
     /// Текущее сочетание. Пустая строка в настройках означает, что пользователь его снял.
@@ -212,7 +238,7 @@ impl Action {
         let stored = NSUserDefaults::standardUserDefaults()
             .stringForKey(&NSString::from_str(self.defaults_key()));
         match stored {
-            None => Some(self.default_shortcut()),
+            None => self.default_shortcut(),
             Some(text) => Shortcut::decode(&text.to_string()),
         }
     }
@@ -257,7 +283,7 @@ pub fn unregister_all() {
 }
 
 fn register(action: Action, shortcut: Shortcut) -> Option<*mut c_void> {
-    let id = EventHotKeyID { signature: SIGNATURE, id: action as u32 };
+    let id = EventHotKeyID { signature: SIGNATURE, id: action.index() };
     let mut hot_key = null_mut();
     let status = unsafe {
         RegisterEventHotKey(
