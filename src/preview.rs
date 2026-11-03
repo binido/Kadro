@@ -1,11 +1,13 @@
+//! Превью снимка в углу экрана и подтверждения, когда превью выключено.
+
 use std::cell::{Cell, RefCell};
 use std::path::Path;
 use std::ptr::NonNull;
 
 use block2::RcBlock;
-use dispatch2::{DispatchQoS, DispatchQueue, GlobalQueueIdentifier};
+use dispatch2::DispatchQueue;
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, ProtocolObject, Sel};
+use objc2::runtime::{AnyObject, Bool, ProtocolObject, Sel};
 use objc2::{AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSBackingStoreType, NSBezelStyle, NSBezierPath, NSBox, NSBoxType, NSButton, NSColor, NSDragOperation,
@@ -23,8 +25,9 @@ use objc2_user_notifications::{
 };
 
 use crate::capture::Shot;
+use crate::output::{self, in_background};
 use crate::settings::{Confirmation, PreviewHiding, Settings};
-use crate::{assets, output, pin};
+use crate::{assets, geometry, pin};
 
 /// Наибольший размер миниатюры в точках.
 const MAX_SIZE: NSSize = NSSize::new(220.0, 160.0);
@@ -131,10 +134,7 @@ define_class!(
 
         #[unsafe(method(copyImage:))]
         fn copy_image(&self, _sender: Option<&AnyObject>) {
-            let (image, scale) = (self.ivars().image.clone(), self.ivars().scale);
-            in_background(move || {
-                output::copy(&image, scale);
-            });
+            output::copy_in_background(self.ivars().image.clone(), self.ivars().scale);
             self.ivars().handled.set(true);
             dismiss(Dismissal::Done);
         }
@@ -280,7 +280,15 @@ pub fn show(mtm: MainThreadMarker, image: CFRetained<CGImage>, scale: f64, shot:
         NSSize::new(CGImage::width(Some(&image)) as f64 / scale, CGImage::height(Some(&image)) as f64 / scale),
         MAX_SIZE,
     );
-    let visible = screen_for(mtm, &shot).visibleFrame();
+    let Some(screen) = screen_for(mtm, &shot) else {
+        eprintln!("kadro: no display to show the preview on");
+        // Снимок не пропадает молча, как и при закрытии превью.
+        if !handled {
+            output::copy_in_background(image, scale);
+        }
+        return;
+    };
+    let visible = screen.visibleFrame();
     let frame = NSRect::new(
         NSPoint::new(visible.origin.x + visible.size.width - size.width - MARGIN, visible.origin.y + MARGIN),
         size,
@@ -325,10 +333,7 @@ fn dismiss(reason: Dismissal) {
     let ivars = preview.view.ivars();
     // Снимок не пропадает молча: если с ним ничего не сделали, он остаётся в буфере обмена.
     if reason == Dismissal::Expired && !ivars.handled.get() {
-        let (image, scale) = (ivars.image.clone(), ivars.scale);
-        in_background(move || {
-            output::copy(&image, scale);
-        });
+        output::copy_in_background(ivars.image.clone(), ivars.scale);
     }
     retire(preview.panel);
 }
@@ -351,12 +356,8 @@ pub fn confirm(mtm: MainThreadMarker, copied: bool, saved: Option<&Path>, shot: 
 
 /// Короткая плашка внизу экрана со снимком.
 fn popup(mtm: MainThreadMarker, text: &str, shot: &Shot) {
-    POPUP.with_borrow_mut(|slot| {
-        if let Some(previous) = slot.take() {
-            previous.orderOut(None);
-            retire(previous);
-        }
-    });
+    hide_popup();
+    let Some(screen) = screen_for(mtm, shot) else { return };
 
     let icon = NSImageView::imageViewWithImage(&assets::icon(assets::CHECK, 16.0).unwrap_or_default(), mtm);
     icon.setContentTintColor(Some(&NSColor::whiteColor()));
@@ -372,7 +373,7 @@ fn popup(mtm: MainThreadMarker, text: &str, shot: &Shot) {
     let padding = NSSize::new(16.0, 10.0);
     let panel_size = NSSize::new(size.width + 2.0 * padding.width, size.height + 2.0 * padding.height);
 
-    let visible = screen_for(mtm, shot).visibleFrame();
+    let visible = screen.visibleFrame();
     let frame = NSRect::new(
         NSPoint::new(visible.origin.x + (visible.size.width - panel_size.width) / 2.0, visible.origin.y + 72.0),
         panel_size,
@@ -391,16 +392,16 @@ fn popup(mtm: MainThreadMarker, text: &str, shot: &Shot) {
     panel.setContentView(Some(&background));
     panel.orderFrontRegardless();
 
-    let fire = RcBlock::new(|_timer: NonNull<NSTimer>| {
-        POPUP.with_borrow_mut(|slot| {
-            if let Some(panel) = slot.take() {
-                panel.orderOut(None);
-                retire(panel);
-            }
-        });
-    });
+    let fire = RcBlock::new(|_timer: NonNull<NSTimer>| hide_popup());
     unsafe { NSTimer::scheduledTimerWithTimeInterval_repeats_block(POPUP_SECONDS, false, &fire) };
     POPUP.set(Some(panel));
+}
+
+fn hide_popup() {
+    if let Some(panel) = POPUP.take() {
+        panel.orderOut(None);
+        retire(panel);
+    }
 }
 
 /// Уведомление macOS. Разрешение запрашивается при первом уведомлении, отказ просто глушит их.
@@ -413,7 +414,7 @@ fn notify(text: &str, saved: Option<&Path>) {
     }
     let identifier = NSString::from_str(&format!("kadro-{}", std::process::id()));
     let request = UNNotificationRequest::requestWithIdentifier_content_trigger(&identifier, &content, None);
-    let granted = RcBlock::new(move |granted: objc2::runtime::Bool, _error: *mut NSError| {
+    let granted = RcBlock::new(move |granted: Bool, _error: *mut NSError| {
         if granted.as_bool() {
             UNUserNotificationCenter::currentNotificationCenter()
                 .addNotificationRequest_withCompletionHandler(&request, None);
@@ -454,16 +455,15 @@ pub fn configure_floating(panel: &NSPanel) {
 }
 
 /// Экран, где сделан снимок, по центру его области. Если такого уже нет - главный.
-fn screen_for(mtm: MainThreadMarker, shot: &Shot) -> Retained<NSScreen> {
-    let r = to_cocoa(mtm, shot.global_rect);
-    let center = NSPoint::new(r.origin.x + r.size.width / 2.0, r.origin.y + r.size.height / 2.0);
+/// `None`, только если к Mac не подключён ни один дисплей.
+fn screen_for(mtm: MainThreadMarker, shot: &Shot) -> Option<Retained<NSScreen>> {
+    let center = geometry::center(to_cocoa(mtm, shot.global_rect));
     let screens = NSScreen::screens(mtm);
     screens
         .iter()
-        .find(|s| crate::capture::contains(s.frame(), center))
+        .find(|s| geometry::contains(s.frame(), center))
         .or_else(|| screens.firstObject())
         .or_else(|| NSScreen::mainScreen(mtm))
-        .expect("a display is attached")
 }
 
 /// Переводит прямоугольник из глобальных координат CG в координаты окон Cocoa.
@@ -479,13 +479,10 @@ fn fit(size: NSSize, limit: NSSize) -> NSSize {
     NSSize::new((size.width * ratio).round().max(1.0), (size.height * ratio).round().max(1.0))
 }
 
+/// Держит закрытую панель до конца текущего события и освобождает её следующим шагом главной очереди.
 pub fn retire(panel: Retained<NSPanel>) {
     RETIRED.with_borrow_mut(|retired| retired.push(panel));
     DispatchQueue::main().exec_async(|| drop(RETIRED.take()));
-}
-
-pub fn in_background(work: impl FnOnce() + Send + 'static) {
-    DispatchQueue::global_queue(GlobalQueueIdentifier::QualityOfService(DispatchQoS::UserInitiated)).exec_async(work);
 }
 
 #[cfg(test)]

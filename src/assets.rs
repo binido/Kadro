@@ -1,3 +1,5 @@
+//! Встроенные в бинарник ресурсы: шрифт Space Grotesk и иконки Lucide.
+
 use std::cell::OnceCell;
 
 use objc2::rc::Retained;
@@ -5,8 +7,10 @@ use objc2::runtime::AnyObject;
 use objc2::{AnyThread, Message};
 use objc2_app_kit::{NSFont, NSFontDescriptor, NSFontVariationAttribute, NSImage};
 use objc2_core_foundation::{CFData, CGSize};
-use objc2_core_text::CTFontManagerCreateFontDescriptorFromData;
+use objc2_core_text::{CTFontDescriptor, CTFontManagerCreateFontDescriptorFromData};
 use objc2_foundation::{NSData, NSDictionary, NSNumber, NSString};
+
+use crate::bridge;
 
 const SPACE_GROTESK: &[u8] = include_bytes!("../assets/SpaceGrotesk.ttf");
 // Ось толщины 'wght' вариативного шрифта.
@@ -51,8 +55,8 @@ fn weighted_font(size: f64, weight: f64) -> Retained<NSFont> {
         cell.get_or_init(|| {
             let data = CFData::from_static_bytes(SPACE_GROTESK);
             let descriptor = unsafe { CTFontManagerCreateFontDescriptorFromData(&data) }?;
-            // CTFontDescriptor и NSFontDescriptor взаимозаменяемы без копирования.
-            let descriptor: &NSFontDescriptor = unsafe { &*(&*descriptor as *const _ as *const NSFontDescriptor) };
+            // SAFETY: CTFontDescriptor и NSFontDescriptor взаимозаменяемы без копирования.
+            let descriptor: &NSFontDescriptor = unsafe { bridge::toll_free::<CTFontDescriptor, _>(&descriptor) };
             Some(descriptor.retain())
         })
         .clone()

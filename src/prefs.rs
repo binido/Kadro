@@ -1,10 +1,12 @@
+//! Окно настроек: общие параметры снимков и сочетания клавиш.
+
 use std::cell::{Cell, OnceCell, RefCell};
 
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, ProtocolObject};
+use objc2::runtime::{AnyObject, ProtocolObject, Sel};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSAlert, NSApplication, NSBeep, NSBox, NSBoxType, NSButton, NSCellImagePosition, NSColor, NSControl,
+    NSAlert, NSApplication, NSBeep, NSBezelStyle, NSBox, NSBoxType, NSButton, NSCellImagePosition, NSColor, NSControl,
     NSControlStateValueOff, NSControlStateValueOn, NSControlTextEditingDelegate, NSEvent, NSEventModifierFlags,
     NSGridCell, NSGridCellPlacement, NSGridView, NSLineBreakMode, NSModalResponseOK, NSOpenPanel, NSResponder,
     NSStackView, NSTabViewController, NSTabViewControllerTabStyle, NSTabViewItem, NSTextField, NSTextFieldDelegate,
@@ -15,17 +17,17 @@ use objc2_foundation::{
 };
 use objc2_service_management::{SMAppService, SMAppServiceStatus};
 
-use crate::assets;
 use crate::hotkeys::{self, Action, Shortcut};
-use crate::settings::{self, Confirmation, Cursor, DEFAULT_FILE_NAME_TEMPLATE, Format, PreviewHiding, Settings};
+use crate::settings::{
+    self, Choice, Confirmation, Cursor, DEFAULT_FILE_NAME_TEMPLATE, Format, PreviewHiding, Settings,
+};
+use crate::{assets, keys};
 
 const MARGIN: f64 = 24.0;
 const FIELD_WIDTH: f64 = 240.0;
 const SHORTCUT_WIDTH: f64 = 140.0;
 const KEYBOARD_SETTINGS_URL: &str = "x-apple.systempreferences:com.apple.Keyboard-Settings.extension";
 const FONT_SIZE: f64 = 13.0;
-const ESCAPE_KEY: u16 = 53;
-const DELETE_KEYS: [u16; 2] = [51, 117];
 
 thread_local! {
     static WINDOW: RefCell<Option<Retained<NSWindow>>> = const { RefCell::new(None) };
@@ -72,30 +74,22 @@ define_class!(
 
         #[unsafe(method(changePreviewHiding:))]
         fn change_preview_hiding(&self, sender: &NSButton) {
-            if let Some(hiding) = PreviewHiding::ALL.get(sender.tag() as usize) {
-                settings::set_string(settings::PREVIEW_HIDING, hiding.key());
-            }
+            store_choice::<PreviewHiding>(sender);
         }
 
         #[unsafe(method(changeConfirmation:))]
         fn change_confirmation(&self, sender: &NSButton) {
-            if let Some(confirmation) = Confirmation::ALL.get(sender.tag() as usize) {
-                settings::set_string(settings::CONFIRMATION, confirmation.key());
-            }
+            store_choice::<Confirmation>(sender);
         }
 
         #[unsafe(method(changeFormat:))]
         fn change_format(&self, sender: &NSButton) {
-            if let Some(format) = Format::ALL.get(sender.tag() as usize) {
-                settings::set_string(settings::FORMAT, format.key());
-            }
+            store_choice::<Format>(sender);
         }
 
         #[unsafe(method(changeCursor:))]
         fn change_cursor(&self, sender: &NSButton) {
-            if let Some(cursor) = Cursor::ALL.get(sender.tag() as usize) {
-                settings::set_string(settings::CURSOR, cursor.key());
-            }
+            store_choice::<Cursor>(sender);
         }
 
         #[unsafe(method(chooseDirectory:))]
@@ -169,11 +163,11 @@ impl Controller {
     }
 }
 
-#[derive(Default)]
 struct ShortcutIvars {
-    action: Cell<usize>,
+    action: Action,
     recording: Cell<bool>,
-    message: OnceCell<Retained<NSTextField>>,
+    /// Подпись под таблицей, куда пишется, почему сочетание не подошло.
+    message: Retained<NSTextField>,
 }
 
 define_class!(
@@ -228,23 +222,21 @@ define_class!(
 
 impl ShortcutButton {
     fn new(mtm: MainThreadMarker, action: Action, message: &NSTextField) -> Retained<Self> {
-        let ivars = ShortcutIvars::default();
-        ivars.action.set(Action::ALL.iter().position(|a| *a == action).unwrap_or(0));
-        let _ = ivars.message.set(message.retain());
+        let ivars = ShortcutIvars { action, recording: Cell::new(false), message: message.retain() };
         let this = Self::alloc(mtm).set_ivars(ivars);
         let this: Retained<Self> = unsafe { msg_send![super(this), init] };
         unsafe {
             this.setTarget(Some(&this));
             this.setAction(Some(sel!(startRecording:)));
         }
-        this.setBezelStyle(objc2_app_kit::NSBezelStyle::Push);
+        this.setBezelStyle(NSBezelStyle::Push);
         this.setFont(Some(&assets::font(FONT_SIZE)));
         this.refresh_title();
         this
     }
 
     fn action(&self) -> Action {
-        Action::ALL[self.ivars().action.get()]
+        self.ivars().action
     }
 
     fn refresh_title(&self) {
@@ -253,9 +245,7 @@ impl ShortcutButton {
     }
 
     fn show_message(&self, text: &str) {
-        if let Some(label) = self.ivars().message.get() {
-            label.setStringValue(&NSString::from_str(text));
-        }
+        self.ivars().message.setStringValue(&NSString::from_str(text));
     }
 
     fn stop_recording(&self) {
@@ -274,11 +264,11 @@ impl ShortcutButton {
                 | NSEventModifierFlags::Control
                 | NSEventModifierFlags::Shift,
         );
-        if plain && key_code == ESCAPE_KEY {
+        if plain && key_code == keys::ESCAPE {
             self.show_message("");
             return self.stop_recording();
         }
-        if plain && DELETE_KEYS.contains(&key_code) {
+        if plain && [keys::DELETE, keys::FORWARD_DELETE].contains(&key_code) {
             self.action().set_shortcut(None);
             self.show_message("");
             return self.stop_recording();
@@ -339,7 +329,7 @@ fn build_window(mtm: MainThreadMarker) -> Retained<NSWindow> {
 
 /// Строка таблицы настроек.
 enum Row {
-    Field(String, Retained<NSView>),
+    Field(&'static str, Retained<NSView>),
     Separator,
     Note(Retained<NSView>),
 }
@@ -362,20 +352,8 @@ fn general_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSVie
     directory.widthAnchor().constraintEqualToConstant(FIELD_WIDTH).setActive(true);
     let _ = controller.ivars().directory.set(directory.clone());
 
-    let formats = radios(
-        mtm,
-        Format::ALL.map(Format::title),
-        Format::ALL.iter().position(|f| *f == current.format),
-        controller,
-        sel!(changeFormat:),
-    );
-    let cursor = radios(
-        mtm,
-        Cursor::ALL.map(Cursor::title),
-        Cursor::ALL.iter().position(|c| *c == current.cursor),
-        controller,
-        sel!(changeCursor:),
-    );
+    let formats = radios(mtm, current.format, controller, sel!(changeFormat:));
+    let cursor = radios(mtm, current.cursor, controller, sel!(changeCursor:));
 
     let file_name = NSTextField::textFieldWithString(&NSString::from_str(&current.file_name_template), mtm);
     file_name.setPlaceholderString(Some(&NSString::from_str(DEFAULT_FILE_NAME_TEMPLATE)));
@@ -390,20 +368,8 @@ fn general_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSVie
     let copy = checkbox(mtm, "Copy", current.copy_to_clipboard, controller, sel!(toggleDestination:));
     let save = checkbox(mtm, "Save", current.save_to_file, controller, sel!(toggleDestination:));
     let _ = controller.ivars().preview.set(preview.clone());
-    let hiding = radios(
-        mtm,
-        PreviewHiding::ALL.map(PreviewHiding::title),
-        PreviewHiding::ALL.iter().position(|h| *h == current.preview_hiding),
-        controller,
-        sel!(changePreviewHiding:),
-    );
-    let confirmation = radios(
-        mtm,
-        Confirmation::ALL.map(Confirmation::title),
-        Confirmation::ALL.iter().position(|c| *c == current.confirmation),
-        controller,
-        sel!(changeConfirmation:),
-    );
+    let hiding = radios(mtm, current.preview_hiding, controller, sel!(changePreviewHiding:));
+    let confirmation = radios(mtm, current.confirmation, controller, sel!(changeConfirmation:));
     let _ = controller.ivars().copy.set(copy.clone());
     let _ = controller.ivars().save.set(save.clone());
     controller.update_destinations();
@@ -414,20 +380,20 @@ fn general_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSVie
 
     grid(
         mtm,
-        vec![
-            Row::Field("Screenshots folder".into(), view(&directory)),
-            Row::Field("File name".into(), view(&file_name)),
-            Row::Field(String::new(), view(&tokens)),
-            Row::Field("Save format".into(), inline(mtm, &formats)),
-            Row::Field("Resize retina screenshots".into(), view(&downscale)),
+        &[
+            Row::Field("Screenshots folder", view(&directory)),
+            Row::Field("File name", view(&file_name)),
+            Row::Field("", view(&tokens)),
+            Row::Field("Save format", inline(mtm, &formats)),
+            Row::Field("Resize retina screenshots", view(&downscale)),
             Row::Separator,
-            Row::Field("Cursor in screenshots".into(), inline(mtm, &cursor)),
+            Row::Field("Cursor in screenshots", inline(mtm, &cursor)),
             Row::Separator,
-            Row::Field("Autostart".into(), view(&login)),
+            Row::Field("Autostart", view(&login)),
             Row::Separator,
-            Row::Field("After screenshot".into(), inline(mtm, &[view(&preview), view(&copy), view(&save)])),
-            Row::Field("Hide preview".into(), inline(mtm, &hiding)),
-            Row::Field("Confirm without preview".into(), inline(mtm, &confirmation)),
+            Row::Field("After screenshot", inline(mtm, &[view(&preview), view(&copy), view(&save)])),
+            Row::Field("Hide preview", inline(mtm, &hiding)),
+            Row::Field("Confirm without preview", inline(mtm, &confirmation)),
         ],
         Columns::Fitted,
     )
@@ -462,13 +428,14 @@ fn shortcuts_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSV
     rows.extend(Action::ALL.iter().map(|action| {
         let button = ShortcutButton::new(mtm, *action, &message);
         button.widthAnchor().constraintEqualToConstant(SHORTCUT_WIDTH).setActive(true);
-        Row::Field(action.title().into(), view(&button))
+        Row::Field(action.title(), view(&button))
     }));
     rows.extend([Row::Separator, Row::Note(view(&hint)), Row::Note(view(&message))]);
-    grid(mtm, rows, Columns::Balanced)
+    grid(mtm, &rows, Columns::Balanced)
 }
 
 /// Ширина колонок таблицы настроек.
+#[derive(Clone, Copy)]
 enum Columns {
     /// По содержимому.
     Fitted,
@@ -477,7 +444,7 @@ enum Columns {
 }
 
 /// Таблица настроек: подписи справа налево к контролам, разделители и пояснения во всю ширину.
-fn grid(mtm: MainThreadMarker, rows: Vec<Row>, columns: Columns) -> Retained<NSView> {
+fn grid(mtm: MainThreadMarker, rows: &[Row], columns: Columns) -> Retained<NSView> {
     let cells: Vec<_> = rows
         .iter()
         .map(|row| {
@@ -543,13 +510,7 @@ fn label(mtm: MainThreadMarker, text: &str) -> Retained<NSTextField> {
     label
 }
 
-fn checkbox(
-    mtm: MainThreadMarker,
-    title: &str,
-    on: bool,
-    target: &Controller,
-    action: objc2::runtime::Sel,
-) -> Retained<NSButton> {
+fn checkbox(mtm: MainThreadMarker, title: &str, on: bool, target: &Controller, action: Sel) -> Retained<NSButton> {
     let button = unsafe {
         NSButton::checkboxWithTitle_target_action(&NSString::from_str(title), Some(target), Some(action), mtm)
     };
@@ -558,33 +519,34 @@ fn checkbox(
     button
 }
 
-/// Радиокнопки в одну строку. Tag каждой - её номер в списке.
-fn radios<const N: usize>(
-    mtm: MainThreadMarker,
-    titles: [&str; N],
-    selected: Option<usize>,
-    target: &Controller,
-    action: objc2::runtime::Sel,
-) -> Vec<Retained<NSView>> {
-    titles
+/// Радиокнопки всех вариантов настройки в одну строку. Tag каждой - её номер в [`Choice::ALL`].
+fn radios<T: Choice>(mtm: MainThreadMarker, selected: T, target: &Controller, action: Sel) -> Vec<Retained<NSView>> {
+    T::ALL
         .iter()
         .enumerate()
-        .map(|(index, title)| {
+        .map(|(index, choice)| {
             // Радиокнопки с общим action и общим родителем AppKit сам связывает в группу.
             let radio = unsafe {
                 NSButton::radioButtonWithTitle_target_action(
-                    &NSString::from_str(title),
+                    &NSString::from_str(choice.title()),
                     Some(target),
                     Some(action),
                     mtm,
                 )
             };
             radio.setTag(index as isize);
-            radio.setState(state(selected == Some(index)));
+            radio.setState(state(*choice == selected));
             radio.setFont(Some(&assets::font(FONT_SIZE)));
             view(&radio)
         })
         .collect()
+}
+
+/// Сохраняет вариант настройки, выбранный радиокнопкой из [`radios`].
+fn store_choice<T: Choice>(radio: &NSButton) {
+    if let Some(choice) = usize::try_from(radio.tag()).ok().and_then(|index| T::ALL.get(index)) {
+        settings::set_choice(*choice);
+    }
 }
 
 fn view(view: &NSView) -> Retained<NSView> {
@@ -605,9 +567,11 @@ fn launches_at_login() -> bool {
     status == SMAppServiceStatus::Enabled
 }
 
+/// Путь для подписи кнопки: домашняя папка сокращается до `~`.
 fn display_path(path: &str) -> String {
-    match std::env::var("HOME") {
-        Ok(home) if path.starts_with(&home) => format!("~{}", &path[home.len()..]),
-        _ => path.to_string(),
+    let home = std::env::var("HOME").ok();
+    match home.as_deref().and_then(|home| path.strip_prefix(home)) {
+        Some(rest) => format!("~{rest}"),
+        None => path.to_string(),
     }
 }

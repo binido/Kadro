@@ -1,11 +1,16 @@
+//! Захват экрана, области и окон через ScreenCaptureKit.
+//!
+//! Готовый снимок уходит в [`output::deliver`], а доступ к записи экрана проверяется перед каждым захватом.
+
 use std::cell::Cell;
 use std::ptr::NonNull;
 
 use block2::RcBlock;
 use dispatch2::DispatchQueue;
+use objc2::rc::Retained;
 use objc2::{AnyThread, MainThreadMarker};
 use objc2_app_kit::{NSAlert, NSAlertFirstButtonReturn, NSApplication, NSBeep, NSWorkspace};
-use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{
     CGDirectDisplayID, CGDisplayBounds, CGEvent, CGImage, CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess,
     CGWindowID,
@@ -16,7 +21,7 @@ use objc2_screen_capture_kit::{
 };
 
 use crate::settings::{self, Cursor, Settings};
-use crate::{output, overlay};
+use crate::{geometry, output, overlay};
 
 const SCREEN_RECORDING_SETTINGS_URL: &str =
     "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
@@ -69,10 +74,10 @@ pub fn has_access(mtm: MainThreadMarker) -> bool {
     }
     // Системный запрос macOS показывает один раз, потом молча отказывает.
     // Поэтому при первой попытке за запуск - он, а дальше своё объяснение.
-    if !ACCESS_REQUESTED.replace(true) {
-        CGRequestScreenCaptureAccess();
-    } else {
+    if ACCESS_REQUESTED.replace(true) {
         explain_missing_access(mtm);
+    } else {
+        CGRequestScreenCaptureAccess();
     }
     false
 }
@@ -109,7 +114,7 @@ pub fn capture_screen(mtm: MainThreadMarker) {
     }
     let cursor = CGEvent::location(CGEvent::new(None).as_deref());
     // SCDisplay.frame и позиция CGEvent в одних координатах - от левого верхнего угла главного дисплея.
-    capture(move |display| contains(unsafe { display.frame() }, cursor), None, frontmost_app_name());
+    capture(move |display| geometry::contains(unsafe { display.frame() }, cursor), None, frontmost_app_name());
 }
 
 /// Снимает весь экран после обратного отсчёта в строке меню.
@@ -179,12 +184,11 @@ pub fn capture_window(window_id: CGWindowID) {
             return eprintln!("kadro: window to capture is gone");
         };
         let filter = unsafe { SCContentFilter::initWithDesktopIndependentWindow(SCContentFilter::alloc(), &window) };
-        let scale = unsafe { filter.pointPixelScale() } as f64;
+        let scale = f64::from(unsafe { filter.pointPixelScale() });
         let frame = unsafe { window.frame() };
         let config = unsafe { SCStreamConfiguration::new() };
+        set_output_size(&config, frame.size, scale);
         unsafe {
-            config.setWidth((frame.size.width * scale).round() as usize);
-            config.setHeight((frame.size.height * scale).round() as usize);
             config.setIgnoreShadowsSingleWindow(true);
             config.setShowsCursor(shows_cursor(Kind::Window));
         }
@@ -198,21 +202,17 @@ pub fn capture_window(window_id: CGWindowID) {
 /// Снимает дисплеи целиком для лупы при выделении области. Снимки приходят на главный поток.
 pub fn freeze_displays() {
     with_content(|content| {
-        for display in unsafe { content.displays() }.iter() {
+        for display in &unsafe { content.displays() } {
             let filter = display_filter(content, &display);
-            let scale = unsafe { filter.pointPixelScale() } as f64;
+            let scale = f64::from(unsafe { filter.pointPixelScale() });
             let size = unsafe { filter.contentRect() }.size;
             let config = unsafe { SCStreamConfiguration::new() };
-            unsafe {
-                config.setWidth((size.width * scale).round() as usize);
-                config.setHeight((size.height * scale).round() as usize);
-                config.setShowsCursor(false);
-            }
+            set_output_size(&config, size, scale);
+            unsafe { config.setShowsCursor(false) };
             let display_id = unsafe { display.displayID() };
             let handler = RcBlock::new(move |image: *mut CGImage, _error: *mut NSError| {
-                if let Some(image) =
-                    NonNull::new(image).map(|p| unsafe { objc2_core_foundation::CFRetained::retain(p) })
-                {
+                // SAFETY: ScreenCaptureKit отдаёт действительный снимок или null, а retain продлевает ему жизнь.
+                if let Some(image) = NonNull::new(image).map(|p| unsafe { CFRetained::retain(p) }) {
                     DispatchQueue::main().exec_async(move || overlay::show_frozen(display_id, image));
                 }
             });
@@ -221,7 +221,7 @@ pub fn freeze_displays() {
                     &filter,
                     &config,
                     Some(&handler),
-                )
+                );
             };
         }
     });
@@ -233,7 +233,7 @@ fn capture(pick: impl Fn(&SCDisplay) -> bool + 'static, region: Option<CGRect>, 
             return eprintln!("kadro: display to capture is gone");
         };
         let filter = display_filter(content, &display);
-        let scale = unsafe { filter.pointPixelScale() } as f64;
+        let scale = f64::from(unsafe { filter.pointPixelScale() });
         let display_frame = unsafe { display.frame() };
         let size = region.map_or_else(|| unsafe { filter.contentRect() }.size, |r| r.size);
         let kind = if region.is_some() { Kind::Region } else { Kind::Screen };
@@ -242,10 +242,9 @@ fn capture(pick: impl Fn(&SCDisplay) -> bool + 'static, region: Option<CGRect>, 
             if let Some(region) = region {
                 config.setSourceRect(region);
             }
-            config.setWidth((size.width * scale).round() as usize);
-            config.setHeight((size.height * scale).round() as usize);
             config.setShowsCursor(shows_cursor(kind));
         }
+        set_output_size(&config, size, scale);
         let global_rect = match region {
             Some(r) => CGRect::new(
                 CGPoint::new(display_frame.origin.x + r.origin.x, display_frame.origin.y + r.origin.y),
@@ -258,8 +257,8 @@ fn capture(pick: impl Fn(&SCDisplay) -> bool + 'static, region: Option<CGRect>, 
 }
 
 /// Фильтр дисплея без окон самого Kadro: оверлей не попадает в снимок, даже если ещё не скрылся.
-fn display_filter(content: &SCShareableContent, display: &SCDisplay) -> objc2::rc::Retained<SCContentFilter> {
-    let own_pid = std::process::id() as i32;
+fn display_filter(content: &SCShareableContent, display: &SCDisplay) -> Retained<SCContentFilter> {
+    let own_pid = own_pid();
     let own: Vec<_> =
         unsafe { content.applications() }.iter().filter(|app| unsafe { app.processID() } == own_pid).collect();
     unsafe {
@@ -270,6 +269,23 @@ fn display_filter(content: &SCShareableContent, display: &SCDisplay) -> objc2::r
             &NSArray::new(),
         )
     }
+}
+
+/// Размер снимка в пикселях: размер в точках, умноженный на плотность дисплея.
+fn set_output_size(config: &SCStreamConfiguration, size: CGSize, scale: f64) {
+    unsafe {
+        config.setWidth(pixels(size.width, scale));
+        config.setHeight(pixels(size.height, scale));
+    }
+}
+
+fn pixels(points: f64, scale: f64) -> usize {
+    (points * scale).round() as usize
+}
+
+/// Идентификатор процесса Kadro в том виде, в каком его отдают AppKit и ScreenCaptureKit.
+pub fn own_pid() -> i32 {
+    std::process::id().cast_signed()
 }
 
 fn shows_cursor(kind: Kind) -> bool {
@@ -306,15 +322,8 @@ fn shoot(filter: &SCContentFilter, config: &SCStreamConfiguration, scale: f64, s
         None => report(error),
     });
     unsafe {
-        SCScreenshotManager::captureImageWithFilter_configuration_completionHandler(filter, config, Some(&handler))
+        SCScreenshotManager::captureImageWithFilter_configuration_completionHandler(filter, config, Some(&handler));
     };
-}
-
-pub fn contains(rect: CGRect, point: CGPoint) -> bool {
-    point.x >= rect.origin.x
-        && point.x < rect.origin.x + rect.size.width
-        && point.y >= rect.origin.y
-        && point.y < rect.origin.y + rect.size.height
 }
 
 /// Область целиком лежит на дисплее этого размера. Отключённый дисплей имеет нулевой размер.

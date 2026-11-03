@@ -22,3 +22,22 @@ lto = true
 codegen-units = 1
 strip = true
 panic = "abort"
+
+# Набор линтов из https://github.com/apollographql/rust-best-practices:
+# явные приведения указателей, заимствование вместо лишних владений и единый стиль.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+borrow_as_ptr = "warn"
+cast_lossless = "warn"
+explicit_iter_loop = "warn"
+format_push_string = "warn"
+manual_let_else = "warn"
+needless_pass_by_value = "warn"
+ptr_as_ptr = "warn"
+ptr_cast_constness = "warn"
+redundant_closure_for_method_calls = "warn"
+ref_as_ptr = "warn"
+semicolon_if_nothing_returned = "warn"
+trivially_copy_pass_by_ref = "warn"
