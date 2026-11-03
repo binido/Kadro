@@ -1,8 +1,8 @@
 use std::cell::OnceCell;
 
 use objc2::rc::Retained;
-use objc2::{AnyThread, Message};
 use objc2::runtime::AnyObject;
+use objc2::{AnyThread, Message};
 use objc2_app_kit::{NSFont, NSFontDescriptor, NSFontVariationAttribute, NSImage};
 use objc2_core_foundation::{CFData, CGSize};
 use objc2_core_text::CTFontManagerCreateFontDescriptorFromData;
@@ -62,8 +62,10 @@ fn weighted_font(size: f64, weight: f64) -> Retained<NSFont> {
     };
     // Без явной толщины вариативный файл открывается начертанием Light.
     let axes = NSDictionary::from_slices(&[&*NSNumber::new_u32(WEIGHT_AXIS)], &[&*NSNumber::new_f64(weight)]);
-    let attributes =
-        NSDictionary::<NSString, AnyObject>::from_slices(&[unsafe { NSFontVariationAttribute }], &[&**axes as &AnyObject]);
+    let attributes = NSDictionary::<NSString, AnyObject>::from_slices(
+        &[unsafe { NSFontVariationAttribute }],
+        &[&**axes as &AnyObject],
+    );
     let descriptor = unsafe { base.fontDescriptorByAddingAttributes(&attributes) };
     NSFont::fontWithDescriptor_size(&descriptor, size).unwrap_or_else(|| NSFont::systemFontOfSize(size))
 }

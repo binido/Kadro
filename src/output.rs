@@ -1,31 +1,29 @@
 use std::collections::HashSet;
-use std::ffi::{c_char, c_int, c_void, CString};
+use std::ffi::{CString, c_char, c_int, c_void};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 use dispatch2::DispatchQueue;
-use objc2_app_kit::{NSPasteboard, NSPasteboardTypePNG};
-use objc2_core_foundation::{CFDictionary, CFMutableData, CFNumber, CFRetained, CFString, CGPoint, CGRect, CGSize};
-use objc2_core_graphics::{
-    CGBitmapContextCreate, CGBitmapContextCreateImage, CGContext, CGImage, CGImageAlphaInfo,
-    CGImageByteOrderInfo, CGInterpolationQuality,
-};
+use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2::MainThreadMarker;
+use objc2_app_kit::{NSPasteboard, NSPasteboardTypePNG};
+use objc2_core_foundation::{CFDictionary, CFMutableData, CFNumber, CFRetained, CFString, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::CGColorSpace;
+use objc2_core_graphics::{
+    CGBitmapContextCreate, CGBitmapContextCreateImage, CGContext, CGImage, CGImageAlphaInfo, CGImageByteOrderInfo,
+    CGInterpolationQuality,
+};
 use objc2_foundation::{
-    NSArray, NSData, NSDate, NSDateFormatter, NSNumber, NSPropertyListFormat, NSPropertyListSerialization,
-    NSString,
+    NSArray, NSData, NSDate, NSDateFormatter, NSNumber, NSPropertyListFormat, NSPropertyListSerialization, NSString,
 };
 use objc2_image_io::{
-    kCGImageDestinationLossyCompressionQuality, kCGImagePropertyDPIHeight, kCGImagePropertyDPIWidth,
-    CGImageDestination,
+    CGImageDestination, kCGImageDestinationLossyCompressionQuality, kCGImagePropertyDPIHeight, kCGImagePropertyDPIWidth,
 };
 
 use crate::capture::Shot;
+use crate::settings::{DEFAULT_FILE_NAME_TEMPLATE, Format, Settings};
 use crate::{pin, preview};
-use crate::settings::{Format, Settings, DEFAULT_FILE_NAME_TEMPLATE};
 
 unsafe extern "C" {
     fn setxattr(
@@ -80,7 +78,13 @@ pub fn copy(image: &CGImage, scale: f64) -> Option<Vec<u8>> {
 }
 
 /// Сохраняет снимок в папку по настройкам формата, уменьшения и шаблона имени.
-pub fn save(directory: &Path, image: &CGImage, scale: f64, shot: &Shot, png: Option<&[u8]>) -> std::io::Result<PathBuf> {
+pub fn save(
+    directory: &Path,
+    image: &CGImage,
+    scale: f64,
+    shot: &Shot,
+    png: Option<&[u8]>,
+) -> std::io::Result<PathBuf> {
     let settings = Settings::load();
     let downscaled = (settings.downscale_retina && scale > 1.0).then(|| downscale(image, scale)).flatten();
     let format = match settings.format {
@@ -115,15 +119,13 @@ pub fn retain(image: &CGImage) -> CFRetained<CGImage> {
 /// Кодирует снимок в байты выбранного формата.
 fn encode(image: &CGImage, format: Format, scale: f64) -> Option<Vec<u8>> {
     let data = CFMutableData::new(None, 0)?;
-    let destination = unsafe {
-        CGImageDestination::with_data(&data, &CFString::from_static_str(format.uti()), 1, None)
-    }?;
+    let destination =
+        unsafe { CGImageDestination::with_data(&data, &CFString::from_static_str(format.uti()), 1, None) }?;
     // DPI 144 у Retina-снимка - чтобы Preview и браузеры показывали его в размере точек, а не пикселей.
     let dpi = CFNumber::new_f64(72.0 * scale);
     let quality = CFNumber::new_f64(0.9);
-    let keys = unsafe {
-        [kCGImagePropertyDPIWidth, kCGImagePropertyDPIHeight, kCGImageDestinationLossyCompressionQuality]
-    };
+    let keys =
+        unsafe { [kCGImagePropertyDPIWidth, kCGImagePropertyDPIHeight, kCGImageDestinationLossyCompressionQuality] };
     let properties = CFDictionary::<CFString, CFNumber>::from_slices(&keys, &[&dpi, &dpi, &quality]);
     unsafe { destination.add_image(image, Some(properties.as_ref())) };
     unsafe { destination.finalize() }.then(|| data.to_vec())
@@ -280,7 +282,10 @@ mod tests {
     fn file_name_fills_tokens_and_falls_back_to_default() {
         let shot = Shot { kind: Kind::Window, global_rect: CGRect::default(), app: "Notes/Work".into() };
         assert_eq!(file_name("{app} {mode} {date}", "2026-11-03", "14.12.00", &shot), "Notes-Work Window 2026-11-03");
-        assert_eq!(file_name("Kadro {date} at {time}", "2026-11-03", "14.12.00", &shot), "Kadro 2026-11-03 at 14.12.00");
+        assert_eq!(
+            file_name("Kadro {date} at {time}", "2026-11-03", "14.12.00", &shot),
+            "Kadro 2026-11-03 at 14.12.00"
+        );
         // пустое приложение даёт пустое имя
         let empty = Shot { app: String::new(), ..shot };
         assert_eq!(file_name("{app}", "d", "t", &empty), "Kadro d at t");

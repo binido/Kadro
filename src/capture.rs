@@ -7,10 +7,10 @@ use objc2::{AnyThread, MainThreadMarker};
 use objc2_app_kit::{NSAlert, NSAlertFirstButtonReturn, NSApplication, NSBeep, NSWorkspace};
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{
-    CGDirectDisplayID, CGDisplayBounds, CGEvent, CGImage, CGPreflightScreenCaptureAccess,
-    CGRequestScreenCaptureAccess, CGWindowID,
+    CGDirectDisplayID, CGDisplayBounds, CGEvent, CGImage, CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess,
+    CGWindowID,
 };
-use objc2_foundation::{ns_string, NSArray, NSError, NSTimer, NSURL};
+use objc2_foundation::{NSArray, NSError, NSTimer, NSURL, ns_string};
 use objc2_screen_capture_kit::{
     SCContentFilter, SCDisplay, SCScreenshotManager, SCShareableContent, SCStreamConfiguration,
 };
@@ -175,15 +175,10 @@ pub fn capture_active_window(mtm: MainThreadMarker) {
 /// Снимает окно без тени.
 pub fn capture_window(window_id: CGWindowID) {
     with_content(move |content| {
-        let Some(window) = unsafe { content.windows() }
-            .iter()
-            .find(|w| unsafe { w.windowID() } == window_id)
-        else {
+        let Some(window) = unsafe { content.windows() }.iter().find(|w| unsafe { w.windowID() } == window_id) else {
             return eprintln!("kadro: window to capture is gone");
         };
-        let filter = unsafe {
-            SCContentFilter::initWithDesktopIndependentWindow(SCContentFilter::alloc(), &window)
-        };
+        let filter = unsafe { SCContentFilter::initWithDesktopIndependentWindow(SCContentFilter::alloc(), &window) };
         let scale = unsafe { filter.pointPixelScale() } as f64;
         let frame = unsafe { window.frame() };
         let config = unsafe { SCStreamConfiguration::new() };
@@ -215,7 +210,9 @@ pub fn freeze_displays() {
             }
             let display_id = unsafe { display.displayID() };
             let handler = RcBlock::new(move |image: *mut CGImage, _error: *mut NSError| {
-                if let Some(image) = NonNull::new(image).map(|p| unsafe { objc2_core_foundation::CFRetained::retain(p) }) {
+                if let Some(image) =
+                    NonNull::new(image).map(|p| unsafe { objc2_core_foundation::CFRetained::retain(p) })
+                {
                     DispatchQueue::main().exec_async(move || overlay::show_frozen(display_id, image));
                 }
             });
@@ -263,10 +260,8 @@ fn capture(pick: impl Fn(&SCDisplay) -> bool + 'static, region: Option<CGRect>, 
 /// Фильтр дисплея без окон самого Kadro: оверлей не попадает в снимок, даже если ещё не скрылся.
 fn display_filter(content: &SCShareableContent, display: &SCDisplay) -> objc2::rc::Retained<SCContentFilter> {
     let own_pid = std::process::id() as i32;
-    let own: Vec<_> = unsafe { content.applications() }
-        .iter()
-        .filter(|app| unsafe { app.processID() } == own_pid)
-        .collect();
+    let own: Vec<_> =
+        unsafe { content.applications() }.iter().filter(|app| unsafe { app.processID() } == own_pid).collect();
     unsafe {
         SCContentFilter::initWithDisplay_excludingApplications_exceptingWindows(
             SCContentFilter::alloc(),
@@ -306,18 +301,12 @@ fn with_content(f: impl Fn(&SCShareableContent) + 'static) {
 }
 
 fn shoot(filter: &SCContentFilter, config: &SCStreamConfiguration, scale: f64, shot: Shot) {
-    let handler = RcBlock::new(move |image: *mut CGImage, error: *mut NSError| {
-        match unsafe { image.as_ref() } {
-            Some(image) => output::deliver(image, scale, &shot),
-            None => report(error),
-        }
+    let handler = RcBlock::new(move |image: *mut CGImage, error: *mut NSError| match unsafe { image.as_ref() } {
+        Some(image) => output::deliver(image, scale, &shot),
+        None => report(error),
     });
     unsafe {
-        SCScreenshotManager::captureImageWithFilter_configuration_completionHandler(
-            filter,
-            config,
-            Some(&handler),
-        )
+        SCScreenshotManager::captureImageWithFilter_configuration_completionHandler(filter, config, Some(&handler))
     };
 }
 

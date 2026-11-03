@@ -181,15 +181,13 @@ impl Settings {
         let show_preview = flag(SHOW_PREVIEW, true);
         // Хотя бы одно действие после снимка включено всегда, иначе снимок пропадёт.
         let copy_to_clipboard = flag(COPY_TO_CLIPBOARD, true) || (!save_to_file && !show_preview);
-        let format = string(FORMAT)
-            .and_then(|key| Format::ALL.into_iter().find(|f| f.key() == key))
-            .unwrap_or(Format::Png);
-        let directory = string(DIRECTORY).map(PathBuf::from).unwrap_or_else(|| {
-            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join("Desktop")
-        });
-        let cursor = string(CURSOR)
-            .and_then(|key| Cursor::ALL.into_iter().find(|c| c.key() == key))
-            .unwrap_or(Cursor::Auto);
+        let format =
+            string(FORMAT).and_then(|key| Format::ALL.into_iter().find(|f| f.key() == key)).unwrap_or(Format::Png);
+        let directory = string(DIRECTORY)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join("Desktop"));
+        let cursor =
+            string(CURSOR).and_then(|key| Cursor::ALL.into_iter().find(|c| c.key() == key)).unwrap_or(Cursor::Auto);
         let file_name_template = string(FILE_NAME_TEMPLATE)
             .filter(|t| !t.trim().is_empty())
             .unwrap_or_else(|| DEFAULT_FILE_NAME_TEMPLATE.into());
@@ -227,7 +225,5 @@ pub fn set_flag(key: &str, value: bool) {
 
 pub fn set_string(key: &str, value: &str) {
     let key = NSString::from_str(key);
-    unsafe {
-        NSUserDefaults::standardUserDefaults().setObject_forKey(Some(&NSString::from_str(value)), &key)
-    };
+    unsafe { NSUserDefaults::standardUserDefaults().setObject_forKey(Some(&NSString::from_str(value)), &key) };
 }

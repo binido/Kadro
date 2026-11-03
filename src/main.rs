@@ -12,12 +12,12 @@ use std::cell::OnceCell;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::{define_class, msg_send, sel, MainThreadMarker, MainThreadOnly};
+use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSCellImagePosition, NSApplicationDelegate, NSEventModifierFlags, NSMenu,
-    NSMenuDelegate, NSMenuItem, NSStatusBar, NSStatusItem, NSVariableStatusItemLength,
+    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSCellImagePosition, NSEventModifierFlags,
+    NSMenu, NSMenuDelegate, NSMenuItem, NSStatusBar, NSStatusItem, NSVariableStatusItemLength,
 };
-use objc2_foundation::{ns_string, NSNotification, NSObject, NSObjectProtocol, NSString};
+use objc2_foundation::{NSNotification, NSObject, NSObjectProtocol, NSString, ns_string};
 
 use hotkeys::Action;
 
@@ -127,7 +127,11 @@ impl AppDelegate {
         menu.addItem(&NSMenuItem::separatorItem(mtm));
         // Без target действие уходит по цепочке ответчиков и попадает в NSApplication.
         unsafe {
-            menu.addItemWithTitle_action_keyEquivalent(ns_string!("Quit Kadro"), Some(sel!(terminate:)), ns_string!("q"))
+            menu.addItemWithTitle_action_keyEquivalent(
+                ns_string!("Quit Kadro"),
+                Some(sel!(terminate:)),
+                ns_string!("q"),
+            )
         };
         item.setMenu(Some(&menu));
         STATUS_ITEM.with(|slot| {
@@ -135,9 +139,20 @@ impl AppDelegate {
         });
     }
 
-    fn add_item(&self, menu: &NSMenu, title: &str, action: objc2::runtime::Sel, key: &str, icon: &[u8]) -> Retained<NSMenuItem> {
+    fn add_item(
+        &self,
+        menu: &NSMenu,
+        title: &str,
+        action: objc2::runtime::Sel,
+        key: &str,
+        icon: &[u8],
+    ) -> Retained<NSMenuItem> {
         let item = unsafe {
-            menu.addItemWithTitle_action_keyEquivalent(&NSString::from_str(title), Some(action), &NSString::from_str(key))
+            menu.addItemWithTitle_action_keyEquivalent(
+                &NSString::from_str(title),
+                Some(action),
+                &NSString::from_str(key),
+            )
         };
         unsafe { item.setTarget(Some(self)) };
         item.setImage(assets::icon(icon, 16.0).as_deref());

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use dispatch2::DispatchQueue;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
+use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
     NSApplication, NSBackingStoreType, NSBezierPath, NSColor, NSCompositingOperation, NSCursor, NSEvent,
     NSEventModifierFlags, NSFontAttributeName, NSForegroundColorAttributeName, NSGraphicsContext, NSRectFill,
@@ -13,10 +13,11 @@ use objc2_app_kit::{
 };
 use objc2_core_foundation::{CFDictionary, CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{
-    kCGNullWindowID, CGContext, CGDirectDisplayID, CGDisplayBounds, CGEvent, CGImage, CGInterpolationQuality,
+    CGContext, CGDirectDisplayID, CGDisplayBounds, CGEvent, CGImage, CGInterpolationQuality,
     CGRectMakeWithDictionaryRepresentation, CGWindowID, CGWindowListCopyWindowInfo, CGWindowListOption,
+    kCGNullWindowID,
 };
-use objc2_foundation::{ns_string, NSArray, NSDictionary, NSNumber, NSObject, NSPoint, NSRect, NSSize, NSString};
+use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSObject, NSPoint, NSRect, NSSize, NSString, ns_string};
 
 use crate::{assets, capture};
 
@@ -277,7 +278,8 @@ impl SelectionView {
             origin.y = selection.origin.y + selection.size.height + 6.0;
         }
         origin.x = origin.x.max(0.0);
-        let badge = NSRect::new(origin, NSSize::new(size.width + 2.0 * padding.width, size.height + 2.0 * padding.height));
+        let badge =
+            NSRect::new(origin, NSSize::new(size.width + 2.0 * padding.width, size.height + 2.0 * padding.height));
         NSColor::colorWithWhite_alpha(0.0, 0.7).setFill();
         NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(badge, 4.0, 4.0).fill();
         unsafe {
@@ -376,10 +378,7 @@ fn selection_rect(start: NSPoint, end: NSPoint, square: bool) -> NSRect {
         dx = side.copysign(dx);
         dy = side.copysign(dy);
     }
-    NSRect::new(
-        NSPoint::new(start.x.min(start.x + dx), start.y.min(start.y + dy)),
-        NSSize::new(dx.abs(), dy.abs()),
-    )
+    NSRect::new(NSPoint::new(start.x.min(start.x + dx), start.y.min(start.y + dy)), NSSize::new(dx.abs(), dy.abs()))
 }
 
 /// Переводит прямоугольник из глобальных координат CG (начало вверху слева главного дисплея)
@@ -406,10 +405,8 @@ pub fn select(mtm: MainThreadMarker, mode: Mode) {
     }
 
     let mouse = NSEvent::mouseLocation();
-    let (windows, views): (Vec<_>, Vec<_>) = NSScreen::screens(mtm)
-        .iter()
-        .map(|screen| overlay_window(mtm, &screen))
-        .unzip();
+    let (windows, views): (Vec<_>, Vec<_>) =
+        NSScreen::screens(mtm).iter().map(|screen| overlay_window(mtm, &screen)).unzip();
     NSApplication::sharedApplication(mtm).activate();
     for window in &windows {
         if capture::contains(window.frame(), mouse) {
@@ -435,9 +432,11 @@ fn track_pointer() {
             if view.ivars().start.get().is_some() {
                 continue;
             }
-            let pointer = view.window().map(|w| w.frame()).filter(|f| capture::contains(*f, mouse)).map(|f| {
-                NSPoint::new(mouse.x - f.origin.x, mouse.y - f.origin.y)
-            });
+            let pointer = view
+                .window()
+                .map(|w| w.frame())
+                .filter(|f| capture::contains(*f, mouse))
+                .map(|f| NSPoint::new(mouse.x - f.origin.x, mouse.y - f.origin.y));
             if pointer.is_some() || view.ivars().pointer.get().is_some() {
                 view.ivars().pointer.set(pointer);
                 view.setNeedsDisplay(true);
@@ -502,9 +501,8 @@ pub fn on_screen_windows() -> Vec<TargetWindow> {
     // CFArray и NSArray взаимозаменяемы без копирования.
     let list: &NSArray<NSDictionary<NSString, AnyObject>> = unsafe { &*(&*list as *const _ as *const _) };
     let own_pid = std::process::id() as i32;
-    let number = |info: &NSDictionary<NSString, AnyObject>, key: &NSString| {
-        info.objectForKey(key)?.downcast::<NSNumber>().ok()
-    };
+    let number =
+        |info: &NSDictionary<NSString, AnyObject>, key: &NSString| info.objectForKey(key)?.downcast::<NSNumber>().ok();
 
     list.iter()
         .filter_map(|info| {
