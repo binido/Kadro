@@ -29,6 +29,7 @@ pub const COPY: &[u8] = include_bytes!("../assets/icons/copy.svg");
 pub const SAVE: &[u8] = include_bytes!("../assets/icons/save.svg");
 pub const X: &[u8] = include_bytes!("../assets/icons/x.svg");
 pub const CHECK: &[u8] = include_bytes!("../assets/icons/check.svg");
+pub const PIN: &[u8] = include_bytes!("../assets/icons/pin.svg");
 
 thread_local! {
     static FONT: OnceCell<Option<Retained<NSFontDescriptor>>> = const { OnceCell::new() };

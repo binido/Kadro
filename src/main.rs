@@ -3,6 +3,7 @@ mod capture;
 mod hotkeys;
 mod output;
 mod overlay;
+mod pin;
 mod prefs;
 mod preview;
 mod settings;
@@ -116,6 +117,7 @@ impl AppDelegate {
                 Action::DelayedScreen => assets::TIMER,
                 Action::Window => assets::APP_WINDOW,
                 Action::ActiveWindow => assets::APP_WINDOW_MAC,
+                Action::PinLast => assets::PIN,
             };
             let item = self.add_item(&menu, action.title(), sel!(runAction:), "", icon);
             item.setTag(index as isize + 1);

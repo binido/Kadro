@@ -37,7 +37,7 @@ A version is done when all of these hold:
 | 0.1 | Capture utility | Done |
 | 0.2 | Capture modes and precision | Done |
 | 0.3 | After-capture preview | Done |
-| 0.4 | Pinned screenshots | Planned |
+| 0.4 | Pinned screenshots | Done |
 | 0.5 | Editor foundation | Planned |
 | 0.6 | Annotation tools | Planned |
 | 0.7 | Measuring and composing | Planned |
@@ -110,7 +110,7 @@ Technical notes:
 
 Done when: the preview appears within 150 ms of the capture, never takes focus, and closes correctly with several captures in a row.
 
-## 0.4 — Pinned screenshots
+## 0.4 — Pinned screenshots (shipped)
 
 **Goal:** keep a screenshot floating above other windows as a reference.
 

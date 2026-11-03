@@ -8,7 +8,7 @@ use objc2_app_kit::NSEventModifierFlags;
 use objc2_core_foundation::{CFArray, CFRetained};
 use objc2_foundation::{ns_string, NSArray, NSDictionary, NSNumber, NSString, NSUserDefaults};
 
-use crate::{capture, overlay};
+use crate::{capture, overlay, pin};
 
 type OSStatus = i32;
 
@@ -171,17 +171,19 @@ pub enum Action {
     DelayedScreen,
     Window,
     ActiveWindow,
+    PinLast,
 }
 
 impl Action {
     /// Порядок пунктов в меню и строк в настройках.
-    pub const ALL: [Action; 6] = [
+    pub const ALL: [Action; 7] = [
         Action::Region,
         Action::RepeatRegion,
         Action::Screen,
         Action::DelayedScreen,
         Action::Window,
         Action::ActiveWindow,
+        Action::PinLast,
     ];
 
     pub fn title(self) -> &'static str {
@@ -192,6 +194,7 @@ impl Action {
             Action::DelayedScreen => "Capture Full Screen in 3 s",
             Action::Window => "Capture Window",
             Action::ActiveWindow => "Capture Active Window",
+            Action::PinLast => "Pin Last Screenshot",
         }
     }
 
@@ -203,6 +206,7 @@ impl Action {
             Action::DelayedScreen => capture::capture_delayed(mtm),
             Action::Window => overlay::select(mtm, overlay::Mode::Window),
             Action::ActiveWindow => capture::capture_active_window(mtm),
+            Action::PinLast => pin::pin_last(mtm),
         }
     }
 
@@ -219,6 +223,7 @@ impl Action {
             Action::DelayedScreen => "shortcutDelayedScreen",
             Action::Window => "shortcutWindow",
             Action::ActiveWindow => "shortcutActiveWindow",
+            Action::PinLast => "shortcutPinLast",
         }
     }
 
@@ -228,7 +233,7 @@ impl Action {
             Action::Screen => 18,
             Action::Region => 19,
             Action::Window => 20,
-            Action::RepeatRegion | Action::DelayedScreen | Action::ActiveWindow => return None,
+            Action::RepeatRegion | Action::DelayedScreen | Action::ActiveWindow | Action::PinLast => return None,
         };
         Some(Shortcut { key_code, modifiers: CONTROL | SHIFT })
     }
