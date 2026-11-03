@@ -12,6 +12,7 @@ use objc2_core_graphics::{
 };
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
+use objc2::MainThreadMarker;
 use objc2_core_graphics::CGColorSpace;
 use objc2_foundation::{
     NSArray, NSData, NSDate, NSDateFormatter, NSNumber, NSPropertyListFormat, NSPropertyListSerialization,
@@ -23,6 +24,7 @@ use objc2_image_io::{
 };
 
 use crate::capture::Shot;
+use crate::preview;
 use crate::settings::{Format, Settings, DEFAULT_FILE_NAME_TEMPLATE};
 
 unsafe extern "C" {
@@ -36,47 +38,71 @@ unsafe extern "C" {
     ) -> c_int;
 }
 
-/// Отдаёт снимок в буфер обмена и в файл согласно настройкам.
+/// Отдаёт снимок в буфер обмена и в файл согласно настройкам, затем показывает превью или подтверждение.
 pub fn deliver(image: &CGImage, scale: f64, shot: &Shot) {
     let settings = Settings::load();
+    let png = if settings.copy_to_clipboard { copy(image, scale) } else { None };
+    let saved = if settings.save_to_file {
+        save(&settings.directory, image, scale, shot, png.as_deref())
+            .inspect_err(|err| eprintln!("kadro: failed to save screenshot: {err}"))
+            .ok()
+    } else {
+        None
+    };
 
-    let png = settings.copy_to_clipboard.then(|| encode(image, Format::Png, scale)).flatten();
-    match &png {
-        Some(png) => {
-            let png = png.clone();
-            DispatchQueue::main().exec_async(move || copy_to_clipboard(&png));
+    let copied = png.is_some();
+    let image = retain(image);
+    let shot = shot.clone();
+    let show_preview = settings.show_preview;
+    DispatchQueue::main().exec_async(move || {
+        let Some(mtm) = MainThreadMarker::new() else { return };
+        if show_preview {
+            preview::show(mtm, image, scale, shot, copied || saved.is_some());
+        } else {
+            preview::confirm(mtm, copied, saved.as_deref(), &shot);
         }
-        None if settings.copy_to_clipboard => eprintln!("kadro: failed to encode clipboard image"),
-        None => {}
-    }
+    });
+}
 
-    if settings.save_to_file {
-        let downscaled = (settings.downscale_retina && scale > 1.0)
-            .then(|| downscale(image, scale))
-            .flatten();
-        let format = match settings.format {
-            Format::Auto if looks_like_photo(image) => Format::Jpeg,
-            Format::Auto => Format::Png,
-            format => format,
-        };
-        let bytes = match (&downscaled, &png) {
-            // Тот же снимок в том же формате уже закодирован для буфера обмена.
-            (None, Some(png)) if matches!(format, Format::Png) => Some(png.clone()),
-            (Some(small), _) => encode(small, format, 1.0),
-            (None, _) => encode(image, format, scale),
-        };
-        let saved = bytes.ok_or_else(|| std::io::Error::other("encoding failed")).and_then(|bytes| {
-            std::fs::create_dir_all(&settings.directory)?;
-            let (date, time) = (now("yyyy-MM-dd"), now("HH.mm.ss"));
-            let name = file_name(&settings.file_name_template, &date, &time, shot);
-            let path = unique_path(&settings.directory, &name, format.extension());
-            std::fs::write(&path, bytes).map(|_| path)
-        });
-        match saved {
-            Ok(path) => mark_as_screenshot(&path, shot),
-            Err(err) => eprintln!("kadro: failed to save screenshot: {err}"),
-        }
-    }
+/// Кладёт снимок в буфер обмена как PNG. Возвращает закодированные байты, чтобы их не кодировать второй раз.
+pub fn copy(image: &CGImage, scale: f64) -> Option<Vec<u8>> {
+    let Some(png) = encode(image, Format::Png, scale) else {
+        eprintln!("kadro: failed to encode clipboard image");
+        return None;
+    };
+    let bytes = png.clone();
+    // NSPasteboard безопасен только на главном потоке.
+    DispatchQueue::main().exec_async(move || copy_to_clipboard(&bytes));
+    Some(png)
+}
+
+/// Сохраняет снимок в папку по настройкам формата, уменьшения и шаблона имени.
+pub fn save(directory: &Path, image: &CGImage, scale: f64, shot: &Shot, png: Option<&[u8]>) -> std::io::Result<PathBuf> {
+    let settings = Settings::load();
+    let downscaled = (settings.downscale_retina && scale > 1.0).then(|| downscale(image, scale)).flatten();
+    let format = match settings.format {
+        Format::Auto if looks_like_photo(image) => Format::Jpeg,
+        Format::Auto => Format::Png,
+        format => format,
+    };
+    let bytes = match (&downscaled, png) {
+        // Тот же снимок в том же формате уже закодирован для буфера обмена.
+        (None, Some(png)) if format == Format::Png => Some(png.to_vec()),
+        (Some(small), _) => encode(small, format, 1.0),
+        (None, _) => encode(image, format, scale),
+    };
+    let bytes = bytes.ok_or_else(|| std::io::Error::other("encoding failed"))?;
+    std::fs::create_dir_all(directory)?;
+    let (date, time) = (now("yyyy-MM-dd"), now("HH.mm.ss"));
+    let name = file_name(&settings.file_name_template, &date, &time, shot);
+    let path = unique_path(directory, &name, format.extension());
+    std::fs::write(&path, bytes)?;
+    mark_as_screenshot(&path, shot);
+    Ok(path)
+}
+
+pub fn retain(image: &CGImage) -> CFRetained<CGImage> {
+    unsafe { CFRetained::retain(std::ptr::NonNull::from(image)) }
 }
 
 /// Кодирует снимок в байты выбранного формата.

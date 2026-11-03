@@ -14,7 +14,10 @@ Capture:
 
 Output:
 
-- Copy to the clipboard, save to a folder, or both. At least one is always on; the UI does not allow turning off the last one.
+- After a capture: show a preview, copy to the clipboard, save to a folder, in any combination. At least one is always on; the UI does not allow turning off the last one.
+- The preview is a thumbnail in the corner of the screen the capture came from. It never takes focus. Hovering shows Copy, Save and Close, and dragging it drops the screenshot as a file into other apps. It hides after a few seconds or a click elsewhere, or only with Close.
+- A capture is never lost silently: if the preview hides or is replaced by a new capture before the screenshot was copied, saved or dragged, Kadro copies it. Only Close discards it.
+- Without the preview, copying and saving are confirmed by a pop-up, a macOS notification, or not at all.
 - PNG, JPEG, HEIC, or Auto, which saves text and interface captures as PNG and photo-like ones as JPEG.
 - Optional downscaling of Retina captures to 1x when saving.
 - File names from a template with `{date}`, `{time}`, `{mode}` and `{app}`. The default is `Kadro {date} at {time}`.
@@ -36,7 +39,9 @@ A compact native preferences window uses Space Grotesk typography and Lucide ico
 - Screenshots folder, file name template, save format, Retina downscaling
 - Cursor in screenshots
 - Launch at login
-- After screenshot: copy, save
+- After screenshot: preview, copy, save
+- Hide preview automatically or manually
+- Confirmation without preview: pop-up, notification, none
 
 **Shortcuts**
 

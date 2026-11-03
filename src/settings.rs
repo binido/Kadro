@@ -10,6 +10,9 @@ pub const DOWNSCALE_RETINA: &str = "downscaleRetina";
 pub const CURSOR: &str = "cursor";
 pub const FILE_NAME_TEMPLATE: &str = "fileNameTemplate";
 pub const LAST_AREA: &str = "lastArea";
+pub const SHOW_PREVIEW: &str = "showPreview";
+pub const PREVIEW_HIDING: &str = "previewHiding";
+pub const CONFIRMATION: &str = "confirmation";
 
 pub const DEFAULT_FILE_NAME_TEMPLATE: &str = "Kadro {date} at {time}";
 
@@ -91,6 +94,63 @@ impl Cursor {
     }
 }
 
+/// Когда прятать превью после снимка.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum PreviewHiding {
+    /// Через несколько секунд без наведения или по клику в другом месте.
+    Auto,
+    /// Только кнопкой закрытия.
+    Manual,
+}
+
+impl PreviewHiding {
+    pub const ALL: [PreviewHiding; 2] = [PreviewHiding::Auto, PreviewHiding::Manual];
+
+    pub fn title(self) -> &'static str {
+        match self {
+            PreviewHiding::Auto => "Automatically",
+            PreviewHiding::Manual => "Manually",
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            PreviewHiding::Auto => "auto",
+            PreviewHiding::Manual => "manual",
+        }
+    }
+}
+
+/// Как подтверждать копирование и сохранение, когда превью выключено.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Confirmation {
+    /// Собственная всплывающая плашка Kadro.
+    Popup,
+    /// Уведомление macOS.
+    Notification,
+    None,
+}
+
+impl Confirmation {
+    pub const ALL: [Confirmation; 3] = [Confirmation::Popup, Confirmation::Notification, Confirmation::None];
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Confirmation::Popup => "Pop-up",
+            Confirmation::Notification => "Notification",
+            Confirmation::None => "None",
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Confirmation::Popup => "popup",
+            Confirmation::Notification => "notification",
+            Confirmation::None => "none",
+        }
+    }
+}
+
 /// Пользовательские настройки из NSUserDefaults.
 pub struct Settings {
     pub copy_to_clipboard: bool,
@@ -100,6 +160,9 @@ pub struct Settings {
     pub downscale_retina: bool,
     pub cursor: Cursor,
     pub file_name_template: String,
+    pub show_preview: bool,
+    pub preview_hiding: PreviewHiding,
+    pub confirmation: Confirmation,
 }
 
 impl Settings {
@@ -115,8 +178,9 @@ impl Settings {
         };
 
         let save_to_file = flag(SAVE_TO_FILE, true);
-        // Хотя бы одно назначение включено всегда, иначе снимок пропадёт.
-        let copy_to_clipboard = flag(COPY_TO_CLIPBOARD, true) || !save_to_file;
+        let show_preview = flag(SHOW_PREVIEW, true);
+        // Хотя бы одно действие после снимка включено всегда, иначе снимок пропадёт.
+        let copy_to_clipboard = flag(COPY_TO_CLIPBOARD, true) || (!save_to_file && !show_preview);
         let format = string(FORMAT)
             .and_then(|key| Format::ALL.into_iter().find(|f| f.key() == key))
             .unwrap_or(Format::Png);
@@ -130,6 +194,13 @@ impl Settings {
             .filter(|t| !t.trim().is_empty())
             .unwrap_or_else(|| DEFAULT_FILE_NAME_TEMPLATE.into());
 
+        let preview_hiding = string(PREVIEW_HIDING)
+            .and_then(|key| PreviewHiding::ALL.into_iter().find(|h| h.key() == key))
+            .unwrap_or(PreviewHiding::Auto);
+        let confirmation = string(CONFIRMATION)
+            .and_then(|key| Confirmation::ALL.into_iter().find(|c| c.key() == key))
+            .unwrap_or(Confirmation::Popup);
+
         Settings {
             copy_to_clipboard,
             save_to_file,
@@ -138,6 +209,9 @@ impl Settings {
             downscale_retina: flag(DOWNSCALE_RETINA, false),
             cursor,
             file_name_template,
+            show_preview,
+            preview_hiding,
+            confirmation,
         }
     }
 }
