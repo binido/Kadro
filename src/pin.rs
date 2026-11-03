@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Sel};
-use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly};
+use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSBackingStoreType, NSBeep, NSBezierPath, NSColor, NSControlStateValueOff, NSControlStateValueOn, NSEvent,
     NSEventModifierFlags, NSGraphicsContext, NSMenu, NSMenuItem, NSPanel, NSResponder, NSScreen, NSView, NSWindow,
@@ -11,8 +11,8 @@ use objc2_app_kit::{
 };
 use objc2_core_foundation::{CFData, CFDictionary, CFRetained};
 use objc2_core_graphics::{CGContext, CGImage, CGInterpolationQuality};
-use objc2_foundation::{ns_string, NSDictionary, NSNumber, NSObject, NSPoint, NSRect, NSSize, NSString};
-use objc2_image_io::{kCGImagePropertyDPIWidth, CGImageSource};
+use objc2_foundation::{NSDictionary, NSNumber, NSObject, NSPoint, NSRect, NSSize, NSString, ns_string};
+use objc2_image_io::{CGImageSource, kCGImagePropertyDPIWidth};
 
 use crate::capture::Shot;
 use crate::{output, preview};
@@ -211,11 +211,10 @@ pub fn open(mtm: MainThreadMarker, image: CFRetained<CGImage>, scale: f64, place
     let screens = NSScreen::screens(mtm);
     let cocoa_place = place.map(|r| preview::to_cocoa(mtm, r));
     let mouse = NSEvent::mouseLocation();
-    let anchor = cocoa_place.map_or(mouse, |r| NSPoint::new(r.origin.x + r.size.width / 2.0, r.origin.y + r.size.height / 2.0));
-    let Some(screen) = screens
-        .iter()
-        .find(|s| crate::capture::contains(s.frame(), anchor))
-        .or_else(|| NSScreen::mainScreen(mtm))
+    let anchor =
+        cocoa_place.map_or(mouse, |r| NSPoint::new(r.origin.x + r.size.width / 2.0, r.origin.y + r.size.height / 2.0));
+    let Some(screen) =
+        screens.iter().find(|s| crate::capture::contains(s.frame(), anchor)).or_else(|| NSScreen::mainScreen(mtm))
     else {
         return;
     };
@@ -309,7 +308,8 @@ fn decode(bytes: &[u8]) -> Option<(CFRetained<CGImage>, f64)> {
     let properties: &NSDictionary<NSString, AnyObject> =
         unsafe { &*(&*properties as *const CFDictionary as *const NSDictionary<NSString, AnyObject>) };
     let key: &NSString = unsafe { &*(kCGImagePropertyDPIWidth as *const _ as *const NSString) };
-    let dpi = properties.objectForKey(key).and_then(|n| n.downcast::<NSNumber>().ok()).map_or(72.0, |n| n.doubleValue());
+    let dpi =
+        properties.objectForKey(key).and_then(|n| n.downcast::<NSNumber>().ok()).map_or(72.0, |n| n.doubleValue());
     Some((image, (dpi / 72.0).max(1.0)))
 }
 
@@ -322,7 +322,15 @@ mod tests {
     fn last_screenshot_keeps_its_retina_scale_through_the_file() {
         let space = CGColorSpace::new_device_rgb();
         let context = unsafe {
-            CGBitmapContextCreate(std::ptr::null_mut(), 4, 2, 8, 0, space.as_deref(), CGImageAlphaInfo::PremultipliedLast.0)
+            CGBitmapContextCreate(
+                std::ptr::null_mut(),
+                4,
+                2,
+                8,
+                0,
+                space.as_deref(),
+                CGImageAlphaInfo::PremultipliedLast.0,
+            )
         }
         .unwrap();
         let image = CGBitmapContextCreateImage(Some(&context)).unwrap();

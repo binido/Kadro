@@ -1,12 +1,12 @@
 use std::cell::RefCell;
 use std::ffi::c_void;
-use std::ptr::{null_mut, NonNull};
+use std::ptr::{NonNull, null_mut};
 
-use objc2::runtime::AnyObject;
 use objc2::MainThreadMarker;
+use objc2::runtime::AnyObject;
 use objc2_app_kit::NSEventModifierFlags;
 use objc2_core_foundation::{CFArray, CFRetained};
-use objc2_foundation::{ns_string, NSArray, NSDictionary, NSNumber, NSString, NSUserDefaults};
+use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString, NSUserDefaults, ns_string};
 
 use crate::{capture, overlay, pin};
 
@@ -78,6 +78,7 @@ const OPTION: u32 = 0x800;
 const CONTROL: u32 = 0x1000;
 
 /// Коды клавиш по раскладке ANSI. Буквы показываются латиницей при любой раскладке, как в самой macOS.
+#[rustfmt::skip]
 const KEYS: &[(u32, &str)] = &[
     (0, "A"), (1, "S"), (2, "D"), (3, "F"), (4, "H"), (5, "G"), (6, "Z"), (7, "X"), (8, "C"),
     (9, "V"), (11, "B"), (12, "Q"), (13, "W"), (14, "E"), (15, "R"), (16, "Y"), (17, "T"),
@@ -240,8 +241,7 @@ impl Action {
 
     /// Текущее сочетание. Пустая строка в настройках означает, что пользователь его снял.
     pub fn shortcut(self) -> Option<Shortcut> {
-        let stored = NSUserDefaults::standardUserDefaults()
-            .stringForKey(&NSString::from_str(self.defaults_key()));
+        let stored = NSUserDefaults::standardUserDefaults().stringForKey(&NSString::from_str(self.defaults_key()));
         match stored {
             None => self.default_shortcut(),
             Some(text) => Shortcut::decode(&text.to_string()),
@@ -262,9 +262,7 @@ thread_local! {
 /// Подключает обработчик горячих клавиш и регистрирует сохранённые сочетания.
 pub fn install() {
     let spec = EventTypeSpec { event_class: KEYBOARD_EVENT_CLASS, event_kind: HOT_KEY_PRESSED };
-    unsafe {
-        InstallEventHandler(GetApplicationEventTarget(), handle_hot_key, 1, &spec, null_mut(), null_mut())
-    };
+    unsafe { InstallEventHandler(GetApplicationEventTarget(), handle_hot_key, 1, &spec, null_mut(), null_mut()) };
     register_all();
 }
 
@@ -332,9 +330,8 @@ fn system_shortcuts() -> Vec<Shortcut> {
     };
     // CFArray и NSArray взаимозаменяемы без копирования.
     let list: &NSArray<NSDictionary<NSString, AnyObject>> = unsafe { &*(&*list as *const CFArray).cast() };
-    let number = |info: &NSDictionary<NSString, AnyObject>, key: &NSString| {
-        info.objectForKey(key)?.downcast::<NSNumber>().ok()
-    };
+    let number =
+        |info: &NSDictionary<NSString, AnyObject>, key: &NSString| info.objectForKey(key)?.downcast::<NSNumber>().ok();
     list.iter()
         .filter_map(|info| {
             if !number(&info, ns_string!("kHISymbolicHotKeyEnabled"))?.boolValue() {

@@ -6,7 +6,7 @@ use block2::RcBlock;
 use dispatch2::{DispatchQoS, DispatchQueue, GlobalQueueIdentifier};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject, Sel};
-use objc2::{define_class, msg_send, sel, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly};
+use objc2::{AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSBackingStoreType, NSBezelStyle, NSBezierPath, NSBox, NSBoxType, NSButton, NSColor, NSDragOperation,
     NSDraggingContext, NSDraggingItem, NSDraggingSession, NSDraggingSource, NSEvent, NSEventMask,
@@ -187,8 +187,7 @@ define_class!(
 impl ThumbnailView {
     fn new(mtm: MainThreadMarker, size: NSSize, ivars: ThumbnailIvars) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(ivars);
-        let this: Retained<Self> =
-            unsafe { msg_send![super(this), initWithFrame: NSRect::new(NSPoint::ZERO, size)] };
+        let this: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: NSRect::new(NSPoint::ZERO, size)] };
 
         let options = NSTrackingAreaOptions::MouseEnteredAndExited
             | NSTrackingAreaOptions::ActiveAlways
@@ -364,7 +363,10 @@ fn popup(mtm: MainThreadMarker, text: &str, shot: &Shot) {
     let label = NSTextField::labelWithString(&NSString::from_str(text), mtm);
     label.setFont(Some(&assets::font(13.0)));
     label.setTextColor(Some(&NSColor::whiteColor()));
-    let row = NSStackView::stackViewWithViews(&NSArray::from_retained_slice(&[icon.into_super().into_super(), label.into_super().into_super()]), mtm);
+    let row = NSStackView::stackViewWithViews(
+        &NSArray::from_retained_slice(&[icon.into_super().into_super(), label.into_super().into_super()]),
+        mtm,
+    );
     row.setSpacing(8.0);
     let size = row.fittingSize();
     let padding = NSSize::new(16.0, 10.0);
@@ -413,7 +415,8 @@ fn notify(text: &str, saved: Option<&Path>) {
     let request = UNNotificationRequest::requestWithIdentifier_content_trigger(&identifier, &content, None);
     let granted = RcBlock::new(move |granted: objc2::runtime::Bool, _error: *mut NSError| {
         if granted.as_bool() {
-            UNUserNotificationCenter::currentNotificationCenter().addNotificationRequest_withCompletionHandler(&request, None);
+            UNUserNotificationCenter::currentNotificationCenter()
+                .addNotificationRequest_withCompletionHandler(&request, None);
         }
     });
     center.requestAuthorizationWithOptions_completionHandler(UNAuthorizationOptions::Alert, &granted);
@@ -467,10 +470,7 @@ fn screen_for(mtm: MainThreadMarker, shot: &Shot) -> Retained<NSScreen> {
 /// У CG ось y идёт вниз от верха главного экрана, у Cocoa - вверх от его низа.
 pub fn to_cocoa(mtm: MainThreadMarker, global: NSRect) -> NSRect {
     let primary_height = NSScreen::screens(mtm).firstObject().map_or(0.0, |s| s.frame().size.height);
-    NSRect::new(
-        NSPoint::new(global.origin.x, primary_height - global.origin.y - global.size.height),
-        global.size,
-    )
+    NSRect::new(NSPoint::new(global.origin.x, primary_height - global.origin.y - global.size.height), global.size)
 }
 
 /// Вписывает размер снимка в предел, сохраняя пропорции. Маленькие снимки не растягиваются.

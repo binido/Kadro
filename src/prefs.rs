@@ -2,21 +2,22 @@ use std::cell::{Cell, OnceCell, RefCell};
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
+use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSAlert, NSApplication, NSBeep, NSBox, NSBoxType, NSButton, NSCellImagePosition, NSColor, NSControl,
-    NSControlStateValueOff, NSControlStateValueOn, NSControlTextEditingDelegate, NSEvent, NSEventModifierFlags, NSGridCell,
-    NSGridCellPlacement, NSGridView, NSLineBreakMode, NSModalResponseOK, NSOpenPanel, NSResponder,
-    NSStackView, NSTabViewController, NSTabViewControllerTabStyle, NSTabViewItem, NSTextField,
-    NSTextFieldDelegate, NSView,
-    NSViewController, NSWindow, NSWindowStyleMask, NSWindowToolbarStyle, NSWorkspace,
+    NSControlStateValueOff, NSControlStateValueOn, NSControlTextEditingDelegate, NSEvent, NSEventModifierFlags,
+    NSGridCell, NSGridCellPlacement, NSGridView, NSLineBreakMode, NSModalResponseOK, NSOpenPanel, NSResponder,
+    NSStackView, NSTabViewController, NSTabViewControllerTabStyle, NSTabViewItem, NSTextField, NSTextFieldDelegate,
+    NSView, NSViewController, NSWindow, NSWindowStyleMask, NSWindowToolbarStyle, NSWorkspace,
 };
-use objc2_foundation::{ns_string, NSArray, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRange, NSRect, NSSize, NSString, NSURL};
+use objc2_foundation::{
+    NSArray, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRange, NSRect, NSSize, NSString, NSURL, ns_string,
+};
 use objc2_service_management::{SMAppService, SMAppServiceStatus};
 
 use crate::assets;
 use crate::hotkeys::{self, Action, Shortcut};
-use crate::settings::{self, Confirmation, Cursor, Format, PreviewHiding, Settings, DEFAULT_FILE_NAME_TEMPLATE};
+use crate::settings::{self, Confirmation, Cursor, DEFAULT_FILE_NAME_TEMPLATE, Format, PreviewHiding, Settings};
 
 const MARGIN: f64 = 24.0;
 const FIELD_WIDTH: f64 = 240.0;
@@ -407,24 +408,29 @@ fn general_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSVie
     let _ = controller.ivars().save.set(save.clone());
     controller.update_destinations();
 
-    let downscale = checkbox(mtm, "Downscale to 1× when saving", current.downscale_retina, controller, sel!(toggleDownscale:));
+    let downscale =
+        checkbox(mtm, "Downscale to 1× when saving", current.downscale_retina, controller, sel!(toggleDownscale:));
     let login = checkbox(mtm, "Launch at login", launches_at_login(), controller, sel!(toggleLaunchAtLogin:));
 
-    grid(mtm, vec![
-        Row::Field("Screenshots folder".into(), view(&directory)),
-        Row::Field("File name".into(), view(&file_name)),
-        Row::Field(String::new(), view(&tokens)),
-        Row::Field("Save format".into(), inline(mtm, &formats)),
-        Row::Field("Resize retina screenshots".into(), view(&downscale)),
-        Row::Separator,
-        Row::Field("Cursor in screenshots".into(), inline(mtm, &cursor)),
-        Row::Separator,
-        Row::Field("Autostart".into(), view(&login)),
-        Row::Separator,
-        Row::Field("After screenshot".into(), inline(mtm, &[view(&preview), view(&copy), view(&save)])),
-        Row::Field("Hide preview".into(), inline(mtm, &hiding)),
-        Row::Field("Confirm without preview".into(), inline(mtm, &confirmation)),
-    ], Columns::Fitted)
+    grid(
+        mtm,
+        vec![
+            Row::Field("Screenshots folder".into(), view(&directory)),
+            Row::Field("File name".into(), view(&file_name)),
+            Row::Field(String::new(), view(&tokens)),
+            Row::Field("Save format".into(), inline(mtm, &formats)),
+            Row::Field("Resize retina screenshots".into(), view(&downscale)),
+            Row::Separator,
+            Row::Field("Cursor in screenshots".into(), inline(mtm, &cursor)),
+            Row::Separator,
+            Row::Field("Autostart".into(), view(&login)),
+            Row::Separator,
+            Row::Field("After screenshot".into(), inline(mtm, &[view(&preview), view(&copy), view(&save)])),
+            Row::Field("Hide preview".into(), inline(mtm, &hiding)),
+            Row::Field("Confirm without preview".into(), inline(mtm, &confirmation)),
+        ],
+        Columns::Fitted,
+    )
 }
 
 fn shortcuts_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView> {
@@ -537,8 +543,16 @@ fn label(mtm: MainThreadMarker, text: &str) -> Retained<NSTextField> {
     label
 }
 
-fn checkbox(mtm: MainThreadMarker, title: &str, on: bool, target: &Controller, action: objc2::runtime::Sel) -> Retained<NSButton> {
-    let button = unsafe { NSButton::checkboxWithTitle_target_action(&NSString::from_str(title), Some(target), Some(action), mtm) };
+fn checkbox(
+    mtm: MainThreadMarker,
+    title: &str,
+    on: bool,
+    target: &Controller,
+    action: objc2::runtime::Sel,
+) -> Retained<NSButton> {
+    let button = unsafe {
+        NSButton::checkboxWithTitle_target_action(&NSString::from_str(title), Some(target), Some(action), mtm)
+    };
     button.setState(state(on));
     button.setFont(Some(&assets::font(FONT_SIZE)));
     button
@@ -558,7 +572,12 @@ fn radios<const N: usize>(
         .map(|(index, title)| {
             // Радиокнопки с общим action и общим родителем AppKit сам связывает в группу.
             let radio = unsafe {
-                NSButton::radioButtonWithTitle_target_action(&NSString::from_str(title), Some(target), Some(action), mtm)
+                NSButton::radioButtonWithTitle_target_action(
+                    &NSString::from_str(title),
+                    Some(target),
+                    Some(action),
+                    mtm,
+                )
             };
             radio.setTag(index as isize);
             radio.setState(state(selected == Some(index)));
