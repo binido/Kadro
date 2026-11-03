@@ -24,7 +24,7 @@ use objc2_image_io::{
 };
 
 use crate::capture::Shot;
-use crate::preview;
+use crate::{pin, preview};
 use crate::settings::{Format, Settings, DEFAULT_FILE_NAME_TEMPLATE};
 
 unsafe extern "C" {
@@ -50,12 +50,15 @@ pub fn deliver(image: &CGImage, scale: f64, shot: &Shot) {
         None
     };
 
+    pin::remember(image, scale, png.as_deref());
+
     let copied = png.is_some();
     let image = retain(image);
     let shot = shot.clone();
     let show_preview = settings.show_preview;
     DispatchQueue::main().exec_async(move || {
         let Some(mtm) = MainThreadMarker::new() else { return };
+        pin::remember_place(shot.clone());
         if show_preview {
             preview::show(mtm, image, scale, shot, copied || saved.is_some());
         } else {
@@ -99,6 +102,10 @@ pub fn save(directory: &Path, image: &CGImage, scale: f64, shot: &Shot, png: Opt
     std::fs::write(&path, bytes)?;
     mark_as_screenshot(&path, shot);
     Ok(path)
+}
+
+pub fn encode_png(image: &CGImage, scale: f64) -> Option<Vec<u8>> {
+    encode(image, Format::Png, scale)
 }
 
 pub fn retain(image: &CGImage) -> CFRetained<CGImage> {

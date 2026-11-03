@@ -24,7 +24,7 @@ use objc2_user_notifications::{
 
 use crate::capture::Shot;
 use crate::settings::{Confirmation, PreviewHiding, Settings};
-use crate::{assets, output};
+use crate::{assets, output, pin};
 
 /// Наибольший размер миниатюры в точках.
 const MAX_SIZE: NSSize = NSSize::new(220.0, 160.0);
@@ -151,6 +151,14 @@ define_class!(
             dismiss(Dismissal::Done);
         }
 
+        #[unsafe(method(pinImage:))]
+        fn pin_image(&self, _sender: Option<&AnyObject>) {
+            let ivars = self.ivars();
+            pin::open(self.mtm(), ivars.image.clone(), ivars.scale, Some(ivars.shot.global_rect));
+            ivars.handled.set(true);
+            dismiss(Dismissal::Done);
+        }
+
         #[unsafe(method(closePreview:))]
         fn close_preview(&self, _sender: Option<&AnyObject>) {
             dismiss(Dismissal::Done);
@@ -197,10 +205,13 @@ impl ThumbnailView {
         this.addTrackingArea(&area);
 
         let inset = 6.0;
+        // Нижний ряд по центру: Copy, Save, Pin с зазором в 8 точек.
+        let row_left = size.width / 2.0 - (3.0 * BUTTON_SIZE + 16.0) / 2.0;
         let buttons = [
             (assets::X, sel!(closePreview:), NSPoint::new(inset, size.height - BUTTON_SIZE - inset)),
-            (assets::COPY, sel!(copyImage:), NSPoint::new(size.width / 2.0 - BUTTON_SIZE - 4.0, inset)),
-            (assets::SAVE, sel!(saveImage:), NSPoint::new(size.width / 2.0 + 4.0, inset)),
+            (assets::COPY, sel!(copyImage:), NSPoint::new(row_left, inset)),
+            (assets::SAVE, sel!(saveImage:), NSPoint::new(row_left + BUTTON_SIZE + 8.0, inset)),
+            (assets::PIN, sel!(pinImage:), NSPoint::new(row_left + 2.0 * (BUTTON_SIZE + 8.0), inset)),
         ]
         .map(|(icon, action, origin)| this.add_button(mtm, icon, action, origin));
         *this.ivars().buttons.borrow_mut() = buttons.to_vec();
@@ -419,6 +430,12 @@ fn floating_panel(mtm: MainThreadMarker, frame: NSRect) -> Retained<NSPanel> {
             defer: false,
         ]
     };
+    configure_floating(&panel);
+    panel
+}
+
+/// Плавает над обычными окнами на всех рабочих столах и поверх полноэкранных приложений.
+pub fn configure_floating(panel: &NSPanel) {
     // Иначе orderOut и close освободят панель второй раз, поверх Retained.
     unsafe { panel.setReleasedWhenClosed(false) };
     panel.setFloatingPanel(true);
@@ -431,22 +448,29 @@ fn floating_panel(mtm: MainThreadMarker, frame: NSRect) -> Retained<NSPanel> {
     panel.setCollectionBehavior(
         NSWindowCollectionBehavior::CanJoinAllSpaces | NSWindowCollectionBehavior::FullScreenAuxiliary,
     );
-    panel
 }
 
 /// Экран, где сделан снимок, по центру его области. Если такого уже нет - главный.
 fn screen_for(mtm: MainThreadMarker, shot: &Shot) -> Retained<NSScreen> {
+    let r = to_cocoa(mtm, shot.global_rect);
+    let center = NSPoint::new(r.origin.x + r.size.width / 2.0, r.origin.y + r.size.height / 2.0);
     let screens = NSScreen::screens(mtm);
-    let Some(primary) = screens.firstObject() else {
-        return NSScreen::mainScreen(mtm).expect("a display is attached");
-    };
-    let r = shot.global_rect;
-    // Глобальные координаты CG идут вниз от верха главного экрана, у Cocoa - вверх от его низа.
-    let center = NSPoint::new(
-        r.origin.x + r.size.width / 2.0,
-        primary.frame().size.height - (r.origin.y + r.size.height / 2.0),
-    );
-    screens.iter().find(|s| crate::capture::contains(s.frame(), center)).unwrap_or(primary)
+    screens
+        .iter()
+        .find(|s| crate::capture::contains(s.frame(), center))
+        .or_else(|| screens.firstObject())
+        .or_else(|| NSScreen::mainScreen(mtm))
+        .expect("a display is attached")
+}
+
+/// Переводит прямоугольник из глобальных координат CG в координаты окон Cocoa.
+/// У CG ось y идёт вниз от верха главного экрана, у Cocoa - вверх от его низа.
+pub fn to_cocoa(mtm: MainThreadMarker, global: NSRect) -> NSRect {
+    let primary_height = NSScreen::screens(mtm).firstObject().map_or(0.0, |s| s.frame().size.height);
+    NSRect::new(
+        NSPoint::new(global.origin.x, primary_height - global.origin.y - global.size.height),
+        global.size,
+    )
 }
 
 /// Вписывает размер снимка в предел, сохраняя пропорции. Маленькие снимки не растягиваются.
@@ -455,12 +479,12 @@ fn fit(size: NSSize, limit: NSSize) -> NSSize {
     NSSize::new((size.width * ratio).round().max(1.0), (size.height * ratio).round().max(1.0))
 }
 
-fn retire(panel: Retained<NSPanel>) {
+pub fn retire(panel: Retained<NSPanel>) {
     RETIRED.with_borrow_mut(|retired| retired.push(panel));
     DispatchQueue::main().exec_async(|| drop(RETIRED.take()));
 }
 
-fn in_background(work: impl FnOnce() + Send + 'static) {
+pub fn in_background(work: impl FnOnce() + Send + 'static) {
     DispatchQueue::global_queue(GlobalQueueIdentifier::QualityOfService(DispatchQoS::UserInitiated)).exec_async(work);
 }
 

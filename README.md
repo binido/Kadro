@@ -18,6 +18,13 @@ Output:
 - The preview is a thumbnail in the corner of the screen the capture came from. It never takes focus. Hovering shows Copy, Save and Close, and dragging it drops the screenshot as a file into other apps. It hides after a few seconds or a click elsewhere, or only with Close.
 - A capture is never lost silently: if the preview hides or is replaced by a new capture before the screenshot was copied, saved or dragged, Kadro copies it. Only Close discards it.
 - Without the preview, copying and saving are confirmed by a pop-up, a macOS notification, or not at all.
+
+Pinned screenshots:
+
+- Pin a capture from its preview, or pin the last screenshot from the menu or a shortcut. The pin opens exactly where the capture was taken, at 100% (one image pixel per screen pixel).
+- Pins float above other windows on every Space and over full-screen apps, without taking focus from them. Drag anywhere to move one.
+- The context menu has Copy, 50% / 100% / 200%, Semi-transparent and Close. ⌘C copies; Esc or a double-click closes. Several pins can be open at once.
+- The last screenshot is kept as a file in the temporary folder, not in memory.
 - PNG, JPEG, HEIC, or Auto, which saves text and interface captures as PNG and photo-like ones as JPEG.
 - Optional downscaling of Retina captures to 1x when saving.
 - File names from a template with `{date}`, `{time}`, `{mode}` and `{app}`. The default is `Kadro {date} at {time}`.
@@ -48,6 +55,7 @@ A compact native preferences window uses Space Grotesk typography and Lucide ico
 - Capture region, repeat last region
 - Capture full screen, now or in 3 seconds
 - Capture window, capture active window
+- Pin last screenshot
 - Every shortcut can be recorded or cleared, with conflict detection against Kadro, macOS and other apps
 
 ## Technical constraints
