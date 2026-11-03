@@ -1,8 +1,6 @@
 # Kadro
 
-A minimal, lightweight, native macOS screenshot utility focused entirely on fast screen capture. It lives in the menu bar, captures, and gets out of the way.
-
-Kadro is not a full Shottr replacement. There is no editor, no annotation, and no preview window after a capture.
+A lightweight, native macOS screenshot utility that lives in the menu bar.
 
 ## MVP scope
 
@@ -22,22 +20,9 @@ Kadro is not a full Shottr replacement. There is no editor, no annotation, and n
 
 At least one destination (clipboard or file) must always be enabled. The UI does not allow turning off the last one.
 
-## Out of scope
-
-Not implemented, and not allowed to shape the architecture unless absolutely necessary:
-
-- Screenshot editing
-- Drawing or annotation tools
-- Scrolling screenshots
-- OCR
-- QR code scanning
-- Backgrounds or decorative frames
-- Cloud uploads
-- Licensing or payment systems
-
 ## UI
 
-The app runs from the menu bar. No window stays open permanently, and nothing opens after a capture.
+The app runs from the menu bar.
 
 A compact native preferences window uses Space Grotesk typography and Lucide icons on top of standard macOS controls and behavior.
 
@@ -79,7 +64,7 @@ A compact native preferences window uses Space Grotesk typography and Lucide ico
 
 ## Architecture
 
-Keep it simple. No abstractions for features outside the MVP scope.
+Keep it simple.
 
 ## Building
 
