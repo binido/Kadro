@@ -2,23 +2,28 @@
 
 A lightweight, native macOS screenshot utility that lives in the menu bar.
 
-## MVP scope
+## Features
 
-1. Capture a selected screen region.
-2. Capture the entire screen.
-3. Capture an individual application window.
-4. Copy captures to the system clipboard.
-5. Save captures to a user-configurable directory.
-6. Clipboard and file saving can be enabled at the same time.
-7. Output formats: PNG, JPEG, HEIC.
-8. Configurable global keyboard shortcuts.
-9. Launch at login.
-10. Native macOS menu bar interface.
-11. Multiple monitors and Retina displays.
-12. Optional downscaling of Retina captures when saving.
-13. Window captures exclude the window shadow by default.
+Capture:
 
-At least one destination (clipboard or file) must always be enabled. The UI does not allow turning off the last one.
+- A selected region. While selecting, Kadro shows the size in pixels and a magnifier loupe at the pointer. Arrow keys move the dragged corner by one point (Shift: ten), and holding Shift keeps the selection square.
+- The last selected region again, without selecting.
+- The entire screen under the pointer, right away or after a 3-second countdown in the menu bar.
+- A window picked with the pointer, or the active window straight away. Window captures have no shadow.
+- Multiple displays and Retina displays, each at its own scale.
+
+Output:
+
+- Copy to the clipboard, save to a folder, or both. At least one is always on; the UI does not allow turning off the last one.
+- PNG, JPEG, HEIC, or Auto, which saves text and interface captures as PNG and photo-like ones as JPEG.
+- Optional downscaling of Retina captures to 1x when saving.
+- File names from a template with `{date}`, `{time}`, `{mode}` and `{app}`. The default is `Kadro {date} at {time}`.
+- Saved files are marked as screenshots for Finder and Spotlight, like the ones macOS takes.
+- The pointer appears in full-screen captures only (Auto), in every capture, or never.
+
+App:
+
+- Native menu bar app with configurable global shortcuts and launch at login.
 
 ## UI
 
@@ -28,19 +33,17 @@ A compact native preferences window uses Space Grotesk typography and Lucide ico
 
 **General**
 
-- Copy to clipboard
-- Save to file
-- Image format
-- Screenshot directory
-- Downscale Retina captures
+- Screenshots folder, file name template, save format, Retina downscaling
+- Cursor in screenshots
 - Launch at login
+- After screenshot: copy, save
 
 **Shortcuts**
 
-- Capture region
-- Capture full screen
-- Capture window
-- Editing shortcuts, with conflict detection
+- Capture region, repeat last region
+- Capture full screen, now or in 3 seconds
+- Capture window, capture active window
+- Every shortcut can be recorded or cleared, with conflict detection against Kadro, macOS and other apps
 
 ## Technical constraints
 
@@ -62,7 +65,7 @@ A compact native preferences window uses Space Grotesk typography and Lucide ico
 7. Multi-monitor support, permissions, and Retina handling
 8. Performance optimization and packaging
 
-These stages make up version 0.1. Versions up to 1.0 are planned in [ROADMAP.md](ROADMAP.md).
+These stages made up version 0.1. Later versions are planned in [ROADMAP.md](ROADMAP.md).
 
 ## Architecture
 

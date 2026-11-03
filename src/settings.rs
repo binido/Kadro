@@ -7,22 +7,30 @@ pub const SAVE_TO_FILE: &str = "saveToFile";
 pub const FORMAT: &str = "format";
 pub const DIRECTORY: &str = "directory";
 pub const DOWNSCALE_RETINA: &str = "downscaleRetina";
+pub const CURSOR: &str = "cursor";
+pub const FILE_NAME_TEMPLATE: &str = "fileNameTemplate";
+pub const LAST_AREA: &str = "lastArea";
 
-#[derive(Clone, Copy)]
+pub const DEFAULT_FILE_NAME_TEMPLATE: &str = "Kadro {date} at {time}";
+
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Format {
     Png,
     Jpeg,
     Heic,
+    /// PNG или JPEG в зависимости от содержимого снимка.
+    Auto,
 }
 
 impl Format {
-    pub const ALL: [Format; 3] = [Format::Png, Format::Jpeg, Format::Heic];
+    pub const ALL: [Format; 4] = [Format::Png, Format::Jpeg, Format::Heic, Format::Auto];
 
     pub fn title(self) -> &'static str {
         match self {
             Format::Png => "PNG",
             Format::Jpeg => "JPEG",
             Format::Heic => "HEIC",
+            Format::Auto => "Auto",
         }
     }
 
@@ -32,12 +40,14 @@ impl Format {
             Format::Png => "png",
             Format::Jpeg => "jpeg",
             Format::Heic => "heic",
+            Format::Auto => "auto",
         }
     }
 
+    // Auto заменяется на PNG или JPEG до кодирования, поэтому у него нет своего типа и расширения.
     pub fn uti(self) -> &'static str {
         match self {
-            Format::Png => "public.png",
+            Format::Png | Format::Auto => "public.png",
             Format::Jpeg => "public.jpeg",
             Format::Heic => "public.heic",
         }
@@ -45,9 +55,38 @@ impl Format {
 
     pub fn extension(self) -> &'static str {
         match self {
-            Format::Png => "png",
+            Format::Png | Format::Auto => "png",
             Format::Jpeg => "jpg",
             Format::Heic => "heic",
+        }
+    }
+}
+
+/// Показывать ли курсор на снимке.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Cursor {
+    /// Только на снимках всего экрана.
+    Auto,
+    Show,
+    Hide,
+}
+
+impl Cursor {
+    pub const ALL: [Cursor; 3] = [Cursor::Auto, Cursor::Show, Cursor::Hide];
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Cursor::Auto => "Auto",
+            Cursor::Show => "Show",
+            Cursor::Hide => "Hide",
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Cursor::Auto => "auto",
+            Cursor::Show => "show",
+            Cursor::Hide => "hide",
         }
     }
 }
@@ -59,13 +98,14 @@ pub struct Settings {
     pub format: Format,
     pub directory: PathBuf,
     pub downscale_retina: bool,
+    pub cursor: Cursor,
+    pub file_name_template: String,
 }
 
 impl Settings {
     /// Читает настройки, подставляя значения по умолчанию для отсутствующих ключей.
     pub fn load() -> Self {
         let defaults = NSUserDefaults::standardUserDefaults();
-        let string = |key: &str| defaults.stringForKey(&NSString::from_str(key)).map(|s| s.to_string());
         let flag = |key: &str, default: bool| {
             let key = NSString::from_str(key);
             match defaults.objectForKey(&key) {
@@ -83,6 +123,12 @@ impl Settings {
         let directory = string(DIRECTORY).map(PathBuf::from).unwrap_or_else(|| {
             PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join("Desktop")
         });
+        let cursor = string(CURSOR)
+            .and_then(|key| Cursor::ALL.into_iter().find(|c| c.key() == key))
+            .unwrap_or(Cursor::Auto);
+        let file_name_template = string(FILE_NAME_TEMPLATE)
+            .filter(|t| !t.trim().is_empty())
+            .unwrap_or_else(|| DEFAULT_FILE_NAME_TEMPLATE.into());
 
         Settings {
             copy_to_clipboard,
@@ -90,8 +136,14 @@ impl Settings {
             format,
             directory,
             downscale_retina: flag(DOWNSCALE_RETINA, false),
+            cursor,
+            file_name_template,
         }
     }
+}
+
+pub fn string(key: &str) -> Option<String> {
+    NSUserDefaults::standardUserDefaults().stringForKey(&NSString::from_str(key)).map(|s| s.to_string())
 }
 
 pub fn set_flag(key: &str, value: bool) {

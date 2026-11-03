@@ -22,6 +22,9 @@ pub const SETTINGS: &[u8] = include_bytes!("../assets/icons/settings.svg");
 pub const SLIDERS: &[u8] = include_bytes!("../assets/icons/sliders-horizontal.svg");
 pub const KEYBOARD: &[u8] = include_bytes!("../assets/icons/keyboard.svg");
 pub const FOLDER_OPEN: &[u8] = include_bytes!("../assets/icons/folder-open.svg");
+pub const REPEAT: &[u8] = include_bytes!("../assets/icons/repeat.svg");
+pub const TIMER: &[u8] = include_bytes!("../assets/icons/timer.svg");
+pub const APP_WINDOW_MAC: &[u8] = include_bytes!("../assets/icons/app-window-mac.svg");
 
 thread_local! {
     static FONT: OnceCell<Option<Retained<NSFontDescriptor>>> = const { OnceCell::new() };

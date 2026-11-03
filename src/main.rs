@@ -10,9 +10,9 @@ use std::cell::OnceCell;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly};
+use objc2::{define_class, msg_send, sel, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSEventModifierFlags, NSMenu,
+    NSApplication, NSApplicationActivationPolicy, NSCellImagePosition, NSApplicationDelegate, NSEventModifierFlags, NSMenu,
     NSMenuDelegate, NSMenuItem, NSStatusBar, NSStatusItem, NSVariableStatusItemLength,
 };
 use objc2_foundation::{ns_string, NSNotification, NSObject, NSObjectProtocol, NSString};
@@ -20,9 +20,22 @@ use objc2_foundation::{ns_string, NSNotification, NSObject, NSObjectProtocol, NS
 use hotkeys::Action;
 
 #[derive(Default)]
-struct Ivars {
+struct Ivars {}
+
+thread_local! {
     // Иконка исчезает из строки меню, как только NSStatusItem освобождается.
-    status_item: OnceCell<Retained<NSStatusItem>>,
+    static STATUS_ITEM: OnceCell<Retained<NSStatusItem>> = const { OnceCell::new() };
+}
+
+/// Показывает секунды отсчёта рядом с иконкой в строке меню, None - убирает.
+pub fn show_countdown(seconds: Option<u32>) {
+    let Some(mtm) = MainThreadMarker::new() else { return };
+    STATUS_ITEM.with(|item| {
+        if let Some(button) = item.get().and_then(|item| item.button(mtm)) {
+            let title = seconds.map(|s| format!(" {s}")).unwrap_or_default();
+            button.setTitle(&NSString::from_str(&title));
+        }
+    });
 }
 
 define_class!(
@@ -88,15 +101,20 @@ impl AppDelegate {
         let item = NSStatusBar::systemStatusBar().statusItemWithLength(NSVariableStatusItemLength);
         if let Some(button) = item.button(mtm) {
             button.setImage(assets::icon(assets::APERTURE, 18.0).as_deref());
+            // Иначе секунды отсчёта заменили бы иконку, а не встали рядом.
+            button.setImagePosition(NSCellImagePosition::ImageLeading);
         }
 
         let menu = NSMenu::new(mtm);
         menu.setDelegate(Some(ProtocolObject::from_ref(self)));
         for (index, action) in Action::ALL.iter().enumerate() {
             let icon = match action {
-                Action::Screen => assets::MONITOR,
                 Action::Region => assets::SQUARE_DASHED,
+                Action::RepeatRegion => assets::REPEAT,
+                Action::Screen => assets::MONITOR,
+                Action::DelayedScreen => assets::TIMER,
                 Action::Window => assets::APP_WINDOW,
+                Action::ActiveWindow => assets::APP_WINDOW_MAC,
             };
             let item = self.add_item(&menu, action.title(), sel!(runAction:), "", icon);
             item.setTag(index as isize + 1);
@@ -109,7 +127,9 @@ impl AppDelegate {
             menu.addItemWithTitle_action_keyEquivalent(ns_string!("Quit Kadro"), Some(sel!(terminate:)), ns_string!("q"))
         };
         item.setMenu(Some(&menu));
-        let _ = self.ivars().status_item.set(item);
+        STATUS_ITEM.with(|slot| {
+            let _ = slot.set(item);
+        });
     }
 
     fn add_item(&self, menu: &NSMenu, title: &str, action: objc2::runtime::Sel, key: &str, icon: &[u8]) -> Retained<NSMenuItem> {
