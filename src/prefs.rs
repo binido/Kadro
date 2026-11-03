@@ -16,7 +16,7 @@ use objc2_service_management::{SMAppService, SMAppServiceStatus};
 
 use crate::assets;
 use crate::hotkeys::{self, Action, Shortcut};
-use crate::settings::{self, Cursor, Format, Settings, DEFAULT_FILE_NAME_TEMPLATE};
+use crate::settings::{self, Confirmation, Cursor, Format, PreviewHiding, Settings, DEFAULT_FILE_NAME_TEMPLATE};
 
 const MARGIN: f64 = 24.0;
 const FIELD_WIDTH: f64 = 240.0;
@@ -33,6 +33,7 @@ thread_local! {
 
 #[derive(Default)]
 struct ControllerIvars {
+    preview: OnceCell<Retained<NSButton>>,
     copy: OnceCell<Retained<NSButton>>,
     save: OnceCell<Retained<NSButton>>,
     directory: OnceCell<Retained<NSButton>>,
@@ -61,10 +62,25 @@ define_class!(
     impl Controller {
         #[unsafe(method(toggleDestination:))]
         fn toggle_destination(&self, _sender: &NSButton) {
-            let (copy, save) = self.destinations();
+            let [preview, copy, save] = self.destinations();
+            settings::set_flag(settings::SHOW_PREVIEW, is_on(preview));
             settings::set_flag(settings::COPY_TO_CLIPBOARD, is_on(copy));
             settings::set_flag(settings::SAVE_TO_FILE, is_on(save));
             self.update_destinations();
+        }
+
+        #[unsafe(method(changePreviewHiding:))]
+        fn change_preview_hiding(&self, sender: &NSButton) {
+            if let Some(hiding) = PreviewHiding::ALL.get(sender.tag() as usize) {
+                settings::set_string(settings::PREVIEW_HIDING, hiding.key());
+            }
+        }
+
+        #[unsafe(method(changeConfirmation:))]
+        fn change_confirmation(&self, sender: &NSButton) {
+            if let Some(confirmation) = Confirmation::ALL.get(sender.tag() as usize) {
+                settings::set_string(settings::CONFIRMATION, confirmation.key());
+            }
         }
 
         #[unsafe(method(changeFormat:))]
@@ -137,16 +153,18 @@ impl Controller {
         unsafe { msg_send![super(this), init] }
     }
 
-    fn destinations(&self) -> (&NSButton, &NSButton) {
+    fn destinations(&self) -> [&NSButton; 3] {
         let ivars = self.ivars();
-        (ivars.copy.get().expect("built with the window"), ivars.save.get().expect("built with the window"))
+        [&ivars.preview, &ivars.copy, &ivars.save].map(|cell| &**cell.get().expect("built with the window"))
     }
 
-    /// Последнее включённое назначение нельзя выключить, иначе снимок пропадёт.
+    /// Последнее включённое действие после снимка нельзя выключить, иначе снимок пропадёт.
     fn update_destinations(&self) {
-        let (copy, save) = self.destinations();
-        copy.setEnabled(!is_on(copy) || is_on(save));
-        save.setEnabled(!is_on(save) || is_on(copy));
+        let buttons = self.destinations();
+        let on = buttons.iter().filter(|b| is_on(b)).count();
+        for button in buttons {
+            button.setEnabled(!(is_on(button) && on == 1));
+        }
     }
 }
 
@@ -367,8 +385,24 @@ fn general_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSVie
     let tokens = label(mtm, "{date} {time} {mode} {app}");
     tokens.setTextColor(Some(&NSColor::secondaryLabelColor()));
 
+    let preview = checkbox(mtm, "Preview", current.show_preview, controller, sel!(toggleDestination:));
     let copy = checkbox(mtm, "Copy", current.copy_to_clipboard, controller, sel!(toggleDestination:));
     let save = checkbox(mtm, "Save", current.save_to_file, controller, sel!(toggleDestination:));
+    let _ = controller.ivars().preview.set(preview.clone());
+    let hiding = radios(
+        mtm,
+        PreviewHiding::ALL.map(PreviewHiding::title),
+        PreviewHiding::ALL.iter().position(|h| *h == current.preview_hiding),
+        controller,
+        sel!(changePreviewHiding:),
+    );
+    let confirmation = radios(
+        mtm,
+        Confirmation::ALL.map(Confirmation::title),
+        Confirmation::ALL.iter().position(|c| *c == current.confirmation),
+        controller,
+        sel!(changeConfirmation:),
+    );
     let _ = controller.ivars().copy.set(copy.clone());
     let _ = controller.ivars().save.set(save.clone());
     controller.update_destinations();
@@ -386,7 +420,10 @@ fn general_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSVie
         Row::Field("Cursor in screenshots".into(), inline(mtm, &cursor)),
         Row::Separator,
         Row::Field("Autostart".into(), view(&login)),
-        Row::Field("After screenshot".into(), inline(mtm, &[view(&copy), view(&save)])),
+        Row::Separator,
+        Row::Field("After screenshot".into(), inline(mtm, &[view(&preview), view(&copy), view(&save)])),
+        Row::Field("Hide preview".into(), inline(mtm, &hiding)),
+        Row::Field("Confirm without preview".into(), inline(mtm, &confirmation)),
     ], Columns::Fitted)
 }
 

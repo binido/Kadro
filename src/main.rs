@@ -4,6 +4,7 @@ mod hotkeys;
 mod output;
 mod overlay;
 mod prefs;
+mod preview;
 mod settings;
 
 use std::cell::OnceCell;

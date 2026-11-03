@@ -36,7 +36,7 @@ A version is done when all of these hold:
 |---|---|---|
 | 0.1 | Capture utility | Done |
 | 0.2 | Capture modes and precision | Done |
-| 0.3 | After-capture preview | Planned |
+| 0.3 | After-capture preview | Done |
 | 0.4 | Pinned screenshots | Planned |
 | 0.5 | Editor foundation | Planned |
 | 0.6 | Annotation tools | Planned |
@@ -90,7 +90,7 @@ Technical notes:
 
 Done when: all four new capture paths save and copy correctly on Retina and non-Retina displays, and the template and Auto format have tests.
 
-## 0.3 — After-capture preview
+## 0.3 — After-capture preview (shipped)
 
 **Goal:** after a capture, a small preview gives quick actions without opening a full window.
 

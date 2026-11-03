@@ -25,6 +25,10 @@ pub const FOLDER_OPEN: &[u8] = include_bytes!("../assets/icons/folder-open.svg")
 pub const REPEAT: &[u8] = include_bytes!("../assets/icons/repeat.svg");
 pub const TIMER: &[u8] = include_bytes!("../assets/icons/timer.svg");
 pub const APP_WINDOW_MAC: &[u8] = include_bytes!("../assets/icons/app-window-mac.svg");
+pub const COPY: &[u8] = include_bytes!("../assets/icons/copy.svg");
+pub const SAVE: &[u8] = include_bytes!("../assets/icons/save.svg");
+pub const X: &[u8] = include_bytes!("../assets/icons/x.svg");
+pub const CHECK: &[u8] = include_bytes!("../assets/icons/check.svg");
 
 thread_local! {
     static FONT: OnceCell<Option<Retained<NSFontDescriptor>>> = const { OnceCell::new() };
