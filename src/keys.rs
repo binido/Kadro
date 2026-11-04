@@ -2,16 +2,27 @@
 //!
 //! Коды не зависят от раскладки: они описывают физическое место клавиши на клавиатуре ANSI.
 
+pub const A: u16 = 0;
 pub const S: u16 = 1;
+pub const H: u16 = 4;
 pub const Z: u16 = 6;
+pub const X: u16 = 7;
 pub const C: u16 = 8;
+pub const V: u16 = 9;
+pub const B: u16 = 11;
 pub const W: u16 = 13;
+pub const R: u16 = 15;
+pub const T: u16 = 17;
 pub const EQUAL: u16 = 24;
 pub const NINE: u16 = 25;
 pub const MINUS: u16 = 27;
 pub const ZERO: u16 = 29;
+pub const O: u16 = 31;
 pub const P: u16 = 35;
 pub const RETURN: u16 = 36;
+pub const L: u16 = 37;
+pub const N: u16 = 45;
+pub const M: u16 = 46;
 pub const DELETE: u16 = 51;
 pub const ESCAPE: u16 = 53;
 /// Enter на цифровой клавиатуре.

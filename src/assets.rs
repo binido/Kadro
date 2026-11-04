@@ -45,6 +45,20 @@ pub const REDO: &[u8] = include_bytes!("../assets/icons/redo-2.svg");
 pub const PRINTER: &[u8] = include_bytes!("../assets/icons/printer.svg");
 pub const SQUARE_PEN: &[u8] = include_bytes!("../assets/icons/square-pen.svg");
 pub const CLIPBOARD_PASTE: &[u8] = include_bytes!("../assets/icons/clipboard-paste.svg");
+pub const POINTER: &[u8] = include_bytes!("../assets/icons/mouse-pointer-2.svg");
+pub const ARROW: &[u8] = include_bytes!("../assets/icons/move-up-right.svg");
+pub const LINE: &[u8] = include_bytes!("../assets/icons/minus.svg");
+pub const RECT: &[u8] = include_bytes!("../assets/icons/square.svg");
+pub const OVAL: &[u8] = include_bytes!("../assets/icons/circle.svg");
+pub const PEN: &[u8] = include_bytes!("../assets/icons/pencil.svg");
+pub const HIGHLIGHTER: &[u8] = include_bytes!("../assets/icons/highlighter.svg");
+pub const TEXT: &[u8] = include_bytes!("../assets/icons/type.svg");
+pub const COUNTER: &[u8] = include_bytes!("../assets/icons/hash.svg");
+pub const BLUR: &[u8] = include_bytes!("../assets/icons/droplets.svg");
+pub const PIXELATE: &[u8] = include_bytes!("../assets/icons/grid-3x3.svg");
+pub const SPOTLIGHT: &[u8] = include_bytes!("../assets/icons/flashlight.svg");
+pub const MAGNIFIER: &[u8] = include_bytes!("../assets/icons/search.svg");
+pub const LAYERS: &[u8] = include_bytes!("../assets/icons/layers.svg");
 
 thread_local! {
     static FONT: OnceCell<Option<Retained<NSFontDescriptor>>> = const { OnceCell::new() };
