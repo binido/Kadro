@@ -27,6 +27,10 @@ Editor:
 - Annotations from the tool column on the left or a single key: Select (V), Arrow (A), Line (L), Rectangle (R), Oval (O), Pen (P), Highlighter (H), Text (T), Counter (N), Blur (B), Pixelate (X), Spotlight (S) and Magnifier (M).
 - Arrows with a filled or open head or heads on both ends, solid or dashed lines, outlined, rounded or filled rectangles, outlined or filled ovals, text plain or on a background, numbered counters that renumber when one is removed, blur and pixelate in three strengths, spotlights that dim everything outside rectangles or ellipses, and a 2×, 3× or 4× circular magnifier.
 - Colour, size and style in the toolbar apply to the next annotation and to the selected one. Every annotation can be selected, moved by its body, reshaped by its ends or corners, restyled and deleted (Delete) until Rasterize flattens them into the image. Double-click a text to edit it.
+- Ruler (U): drag to measure, or click to measure the plain area under the pointer from edge to edge, across and along. Lengths show in pixels or points.
+- Color Picker (I): a box next to the pointer shows the colour under it, and a click copies it as HEX, RGB or HSL (sRGB).
+- Add Capture takes a region capture and places it on the canvas, where it moves and resizes like any annotation. Moved annotations snap to the edges and centres of the canvas and of each other.
+- Export GIF saves a two-frame GIF that alternates the image with and without annotations every second.
 - Every edit can be undone (⌘Z) and redone (⇧⌘Z). Edits never lose pixels: the result is always redrawn from the original capture, and the exported image is the canvas pixel for pixel.
 - Copy (⌘C), Save to the screenshots folder (⌘S), Save As (⇧⌘S, format from the extension), Print (⌘P). Esc copies, saves or just closes, as chosen in settings.
 

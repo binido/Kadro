@@ -151,23 +151,23 @@ impl<T: Clone + PartialEq> History<T> {
 
 /// Рисует результат: видимую часть основы, аннотации поверх неё и затем нужный размер.
 /// Без аннотаций и без изменения размера это просто вырезка, без перерисовки.
-/// `scale` - пикселей снимка на точку, по нему толщина линий и кегль переводятся в пиксели.
-/// Аннотацию `hidden` рисует поверх холст, пока её тянут мышью.
+/// `images` - основы и добавленные снимки, `scale` - пикселей снимка на точку, по нему толщина линий
+/// и кегль переводятся в пиксели. Аннотацию `hidden` рисует поверх холст, пока её тянут мышью.
 pub fn render(
-    base: &CGImage,
-    state: State,
-    annotations: &[Annotation],
+    images: &[CFRetained<CGImage>],
+    doc: &Doc,
     hidden: Option<usize>,
     scale: f64,
 ) -> Option<CFRetained<CGImage>> {
+    let (base, state) = (&*images[doc.base], doc.state);
     let cropped = CGImage::with_image_in_rect(Some(base), state.crop.cg())?;
-    let annotated = if annotations.is_empty() {
+    let annotated = if doc.annotations.is_empty() {
         cropped
     } else {
         let context = bitmap(base, state.crop.width as usize, state.crop.height as usize)?;
         let bounds = CGRect::new(CGPoint::ZERO, CGSize::new(state.crop.width, state.crop.height));
         CGContext::draw_image(Some(&context), bounds, Some(&cropped));
-        paint::draw(&context, base, state.crop, annotations, hidden, scale);
+        paint::draw(&context, images, doc, hidden, scale);
         CGBitmapContextCreateImage(Some(&context))?
     };
     if state.width == state.crop.width && state.height == state.crop.height {
@@ -181,9 +181,10 @@ pub fn render(
 }
 
 /// Впечатывает аннотации в основу целиком, без обрезки и изменения размера.
-pub fn rasterize(base: &CGImage, annotations: &[Annotation], scale: f64) -> Option<CFRetained<CGImage>> {
+pub fn rasterize(images: &[CFRetained<CGImage>], doc: &Doc, scale: f64) -> Option<CFRetained<CGImage>> {
+    let base = &images[doc.base];
     let (width, height) = (CGImage::width(Some(base)) as f64, CGImage::height(Some(base)) as f64);
-    render(base, State::original(width, height), annotations, None, scale)
+    render(images, &Doc { state: State::original(width, height), ..doc.clone() }, None, scale)
 }
 
 /// 8-битный BGRA в цветовом пространстве основы.
@@ -255,11 +256,15 @@ mod tests {
         pixels
     }
 
+    fn doc(state: State, annotations: Vec<Annotation>) -> Doc {
+        Doc { state, annotations, base: 0 }
+    }
+
     #[test]
     fn exported_crop_matches_the_source_pixel_for_pixel() {
         let source = pattern(64, 40);
         let state = State::original(64.0, 40.0).cropped(PixelRect::new(5.0, 7.0, 20.0, 11.0));
-        let rendered = render(&source, state, &[], None, 2.0).unwrap();
+        let rendered = render(std::slice::from_ref(&source), &doc(state, Vec::new()), None, 2.0).unwrap();
         let png = output::encode_png(&rendered, 2.0).unwrap();
         let (exported, scale) = output::decode(&png).unwrap();
         assert_eq!(scale, 2.0);
@@ -283,14 +288,15 @@ mod tests {
         // Color::RED в 8 битах
         let red = |p: u32| p & 0x00ff_ffff == 0x00ff_3b30;
 
-        let drawn = pixels(&render(&source, state, &annotations, None, 1.0).unwrap());
+        let images = [source.clone()];
+        let drawn = pixels(&render(&images, &doc(state, annotations.to_vec()), None, 1.0).unwrap());
         let plain = pixels(&source);
         assert!(red(drawn[4 * 30 + 15]) && red(drawn[5 * 30 + 15]));
         // остальное не тронуто
         assert_eq!(drawn[8 * 30 + 15], plain[18 * 64 + 25]);
         assert_eq!(drawn[0], plain[10 * 64 + 10]);
 
-        let hidden = pixels(&render(&source, state, &annotations, Some(0), 1.0).unwrap());
+        let hidden = pixels(&render(&images, &doc(state, annotations.to_vec()), Some(0), 1.0).unwrap());
         assert_eq!(hidden[5 * 30 + 15], plain[15 * 64 + 25]);
     }
 

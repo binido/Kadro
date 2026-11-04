@@ -34,10 +34,13 @@ pub enum Tool {
     Pixelate,
     Spotlight,
     Magnifier,
+    Ruler,
+    /// Снимок, добавленный поверх основы.
+    Image,
 }
 
 impl Tool {
-    pub const ALL: [Tool; 12] = [
+    pub const ALL: [Tool; 14] = [
         Tool::Arrow,
         Tool::Line,
         Tool::Rect,
@@ -50,6 +53,8 @@ impl Tool {
         Tool::Pixelate,
         Tool::Spotlight,
         Tool::Magnifier,
+        Tool::Ruler,
+        Tool::Image,
     ];
 
     pub fn index(self) -> usize {
@@ -72,7 +77,8 @@ impl Tool {
             Tool::Blur | Tool::Pixelate => &["Light", "Medium", "Strong"],
             Tool::Spotlight => &["Rectangle", "Ellipse"],
             Tool::Magnifier => &["2×", "3×", "4×"],
-            Tool::Pen | Tool::Highlighter | Tool::Counter => &[],
+            Tool::Ruler => &["Pixels", "Points"],
+            Tool::Pen | Tool::Highlighter | Tool::Counter | Tool::Image => &[],
         }
     }
 }
@@ -155,6 +161,8 @@ pub struct Annotation {
     /// Ширина и высота текста или диаметр счётчика в пикселях. Их считает отрисовка,
     /// а здесь они нужны, чтобы попадать по тексту и счётчику мышью.
     pub extent: (f64, f64),
+    /// Номер картинки в списке картинок редактора, для добавленного снимка.
+    pub image: usize,
 }
 
 /// За что взялись мышью: за всю аннотацию или за одну её точку.
@@ -167,7 +175,7 @@ pub enum Grip {
 impl Annotation {
     pub fn new(tool: Tool, at: Point, color: Color, size: Size, style: usize) -> Self {
         let points = if tool.is_two_point() { vec![at, at] } else { vec![at] };
-        Annotation { tool, points, color, size, style, text: String::new(), extent: (0.0, 0.0) }
+        Annotation { tool, points, color, size, style, text: String::new(), extent: (0.0, 0.0), image: 0 }
     }
 
     /// Прямоугольник по двум углам. Для остальных инструментов - охват всех точек.
@@ -197,7 +205,9 @@ impl Annotation {
             return Some(Grip::Point(index));
         }
         let inside = match self.tool {
-            Tool::Arrow | Tool::Line => distance_to_segment(p, self.points[0], self.points[1]) <= tolerance,
+            Tool::Arrow | Tool::Line | Tool::Ruler => {
+                distance_to_segment(p, self.points[0], self.points[1]) <= tolerance
+            }
             Tool::Pen | Tool::Highlighter => {
                 self.points.windows(2).any(|w| distance_to_segment(p, w[0], w[1]) <= tolerance)
             }
@@ -231,6 +241,14 @@ impl Annotation {
         }
     }
 
+    /// Занятый прямоугольник: охват точек или место текста и счётчика.
+    pub fn bounds(&self) -> (Point, Point) {
+        match self.tool {
+            Tool::Text | Tool::Counter => self.extent_rect(),
+            _ => self.rect(),
+        }
+    }
+
     /// Сдвигает всю аннотацию.
     pub fn moved(&self, dx: f64, dy: f64) -> Self {
         let points = self.points.iter().map(|p| Point::new(p.x + dx, p.y + dy)).collect();
@@ -250,6 +268,32 @@ impl Annotation {
 /// Верхняя аннотация под точкой: последние нарисованные лежат сверху.
 pub fn hit_test(annotations: &[Annotation], p: Point, tolerance: f64) -> Option<(usize, Grip)> {
     annotations.iter().enumerate().rev().find_map(|(index, a)| a.hit(p, tolerance).map(|grip| (index, grip)))
+}
+
+/// Найденное прилипание: поправка сдвига и линии, к которым прилипло, - вертикальная x и горизонтальная y.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub struct Snap {
+    pub dx: f64,
+    pub dy: f64,
+    pub x: Option<f64>,
+    pub y: Option<f64>,
+}
+
+/// Подтягивает края или центр прямоугольника `moving` к ближайшим краям или центрам `targets`,
+/// если они ближе `tolerance`. Каждая ось прилипает отдельно.
+pub fn snap(moving: (Point, Point), targets: &[(Point, Point)], tolerance: f64) -> Snap {
+    let lines = |min: f64, max: f64| [min, (min + max) / 2.0, max];
+    let axis = |own: [f64; 3], others: &mut dyn Iterator<Item = [f64; 3]>| {
+        others
+            .flat_map(IntoIterator::into_iter)
+            .flat_map(|target| own.map(|line| (target - line, target)))
+            .filter(|(shift, _)| shift.abs() <= tolerance)
+            .min_by(|a, b| a.0.abs().total_cmp(&b.0.abs()))
+    };
+    let (min, max) = moving;
+    let x = axis(lines(min.x, max.x), &mut targets.iter().map(|(a, b)| lines(a.x, b.x)));
+    let y = axis(lines(min.y, max.y), &mut targets.iter().map(|(a, b)| lines(a.y, b.y)));
+    Snap { dx: x.map_or(0.0, |s| s.0), dy: y.map_or(0.0, |s| s.0), x: x.map(|s| s.1), y: y.map(|s| s.1) }
 }
 
 /// Номер счётчика - его место среди счётчиков. Удаление одного перенумеровывает остальные.
@@ -311,6 +355,19 @@ mod tests {
         annotations.remove(0);
         assert_eq!(counter_number(&annotations, 1), 1);
         assert_eq!(counter_number(&annotations, 2), 2);
+    }
+
+    #[test]
+    fn moved_box_snaps_to_the_nearest_edge_or_centre_on_each_axis() {
+        let target = (Point::new(100.0, 100.0), Point::new(200.0, 160.0));
+        // левый край 203 прилипает к правому краю цели 200, верхний край 127 - к её центру 130
+        let moving = (Point::new(203.0, 127.0), Point::new(243.0, 147.0));
+        let snapped = snap(moving, &[target], 5.0);
+        assert_eq!((snapped.dx, snapped.x), (-3.0, Some(200.0)));
+        assert_eq!((snapped.dy, snapped.y), (3.0, Some(130.0)));
+        // дальше допуска - без поправки
+        let far = (Point::new(500.0, 500.0), Point::new(520.0, 520.0));
+        assert_eq!(snap(far, &[target], 5.0), Snap::default());
     }
 
     #[test]

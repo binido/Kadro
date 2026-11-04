@@ -40,7 +40,7 @@ A version is done when all of these hold:
 | 0.4 | Pinned screenshots | Done |
 | 0.5 | Editor foundation | Done |
 | 0.6 | Annotation tools | Done |
-| 0.7 | Measuring and composing | Planned |
+| 0.7 | Measuring and composing | Done |
 | 0.8 | Backgrounds and window frames | Planned |
 | 0.9 | Text and QR recognition | Planned |
 | 0.10 | Scrolling capture | Planned |
@@ -174,7 +174,7 @@ Technical notes:
 
 Done when: every tool round-trips through undo, select, move and edit, and exported images match the canvas.
 
-## 0.7 — Measuring and composing
+## 0.7 — Measuring and composing (shipped)
 
 **Goal:** precise inspection and combining several captures.
 

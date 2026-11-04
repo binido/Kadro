@@ -11,6 +11,7 @@ mod editor;
 mod geometry;
 mod hotkeys;
 mod keys;
+mod measure;
 mod output;
 mod overlay;
 mod paint;
