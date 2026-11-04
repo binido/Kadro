@@ -26,7 +26,7 @@ A version is done when all of these hold:
 - New settings appear in the preferences window in the existing layout: right-aligned labels, grouped sections, Space Grotesk and Lucide icons on native controls.
 - Non-trivial logic has a test: coordinate math, file naming, format choice, parsing.
 - `cargo clippy --all-targets -- -D warnings` and `cargo test` pass.
-- Idle CPU stays at 0% and idle memory under 20 MB with no editor or library window open.
+- Idle CPU stays at 0%. With no editor or library window open, idle memory stays under 20 MB until the editor is first opened and under 30 MB after that. The first editor window loads AppKit window and toolbar machinery that stays resident, about 13 MB, and must not grow with further sessions.
 - README describes the new feature.
 - The version is tagged and its draft release has the DMG.
 
@@ -294,7 +294,7 @@ Checklist:
 
 - Every version from 0.2 to 0.13 is released.
 - Full manual pass of every feature on a single display and on two displays with different scales.
-- Performance budgets hold: idle CPU 0%, idle memory under 20 MB, capture to clipboard under 300 ms on a 5K display.
+- Performance budgets hold: idle CPU 0%, idle memory under 20 MB before the editor is first opened and under 30 MB after, capture to clipboard under 300 ms on a 5K display.
 - No leak growth across 100 captures, editor sessions and pins.
 - README covers every feature, shortcut, setting and URL.
 - Signing with a Developer ID and notarization, if an Apple Developer account is available. Without it the DMG stays ad-hoc signed and README explains how to open it.
