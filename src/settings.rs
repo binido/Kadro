@@ -12,7 +12,13 @@ pub const DOWNSCALE_RETINA: &str = "downscaleRetina";
 pub const CURSOR: &str = "cursor";
 pub const FILE_NAME_TEMPLATE: &str = "fileNameTemplate";
 pub const LAST_AREA: &str = "lastArea";
+/// Старый флаг превью. Учитывается, только если `AFTER_CAPTURE` не сохранён.
 pub const SHOW_PREVIEW: &str = "showPreview";
+pub const AFTER_CAPTURE: &str = "afterCapture";
+pub const EDITOR_ESC: &str = "editorEsc";
+pub const EDITOR_ZOOM: &str = "editorZoom";
+pub const EDITOR_ON_TOP: &str = "editorOnTop";
+pub const EDITOR_SCROLL_ZOOM: &str = "editorScrollZoom";
 pub const PREVIEW_HIDING: &str = "previewHiding";
 pub const CONFIRMATION: &str = "confirmation";
 
@@ -177,6 +183,92 @@ impl Choice for Confirmation {
     }
 }
 
+/// Что показать после снимка.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum AfterCapture {
+    Preview,
+    Editor,
+    Nothing,
+}
+
+impl Choice for AfterCapture {
+    const DEFAULTS_KEY: &'static str = AFTER_CAPTURE;
+    const ALL: &'static [Self] = &[AfterCapture::Preview, AfterCapture::Editor, AfterCapture::Nothing];
+
+    fn title(self) -> &'static str {
+        match self {
+            AfterCapture::Preview => "Preview",
+            AfterCapture::Editor => "Editor",
+            AfterCapture::Nothing => "Nothing",
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            AfterCapture::Preview => "preview",
+            AfterCapture::Editor => "editor",
+            AfterCapture::Nothing => "nothing",
+        }
+    }
+}
+
+/// Что делает Esc в редакторе, кроме закрытия.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum EscAction {
+    Copy,
+    Save,
+    Close,
+}
+
+impl Choice for EscAction {
+    const DEFAULTS_KEY: &'static str = EDITOR_ESC;
+    const ALL: &'static [Self] = &[EscAction::Copy, EscAction::Save, EscAction::Close];
+
+    fn title(self) -> &'static str {
+        match self {
+            EscAction::Copy => "Copy and close",
+            EscAction::Save => "Save and close",
+            EscAction::Close => "Just close",
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            EscAction::Copy => "copy",
+            EscAction::Save => "save",
+            EscAction::Close => "close",
+        }
+    }
+}
+
+/// Масштаб снимка при открытии редактора.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum DefaultZoom {
+    /// Целиком в окне.
+    Fit,
+    /// 100%, если снимок помещается, иначе целиком в окне.
+    Actual,
+}
+
+impl Choice for DefaultZoom {
+    const DEFAULTS_KEY: &'static str = EDITOR_ZOOM;
+    const ALL: &'static [Self] = &[DefaultZoom::Fit, DefaultZoom::Actual];
+
+    fn title(self) -> &'static str {
+        match self {
+            DefaultZoom::Fit => "Fit to window",
+            DefaultZoom::Actual => "Prefer 100%",
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            DefaultZoom::Fit => "fit",
+            DefaultZoom::Actual => "actual",
+        }
+    }
+}
+
 /// Пользовательские настройки из `NSUserDefaults`.
 pub struct Settings {
     pub copy_to_clipboard: bool,
@@ -186,18 +278,26 @@ pub struct Settings {
     pub downscale_retina: bool,
     pub cursor: Cursor,
     pub file_name_template: String,
-    pub show_preview: bool,
+    pub after_capture: AfterCapture,
     pub preview_hiding: PreviewHiding,
     pub confirmation: Confirmation,
+    pub esc_action: EscAction,
+    pub default_zoom: DefaultZoom,
+    pub editor_on_top: bool,
+    pub scroll_zoom: bool,
 }
 
 impl Settings {
     /// Читает настройки, подставляя значения по умолчанию для отсутствующих ключей.
     pub fn load() -> Self {
         let save_to_file = flag(SAVE_TO_FILE).unwrap_or(true);
-        let show_preview = flag(SHOW_PREVIEW).unwrap_or(true);
+        let after_capture = choice().unwrap_or(match flag(SHOW_PREVIEW) {
+            Some(false) => AfterCapture::Nothing,
+            _ => AfterCapture::Preview,
+        });
         // Хотя бы одно действие после снимка включено всегда, иначе снимок пропадёт.
-        let copy_to_clipboard = flag(COPY_TO_CLIPBOARD).unwrap_or(true) || (!save_to_file && !show_preview);
+        let copy_to_clipboard =
+            flag(COPY_TO_CLIPBOARD).unwrap_or(true) || (!save_to_file && after_capture == AfterCapture::Nothing);
         let directory = string(DIRECTORY)
             .map_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join("Desktop"), PathBuf::from);
         let file_name_template = string(FILE_NAME_TEMPLATE)
@@ -212,9 +312,13 @@ impl Settings {
             downscale_retina: flag(DOWNSCALE_RETINA).unwrap_or(false),
             cursor: choice().unwrap_or(Cursor::Auto),
             file_name_template,
-            show_preview,
+            after_capture,
             preview_hiding: choice().unwrap_or(PreviewHiding::Auto),
             confirmation: choice().unwrap_or(Confirmation::Popup),
+            esc_action: choice().unwrap_or(EscAction::Copy),
+            default_zoom: choice().unwrap_or(DefaultZoom::Actual),
+            editor_on_top: flag(EDITOR_ON_TOP).unwrap_or(false),
+            scroll_zoom: flag(EDITOR_SCROLL_ZOOM).unwrap_or(false),
         }
     }
 }
@@ -270,5 +374,8 @@ mod tests {
         assert_keys_round_trip::<Cursor>();
         assert_keys_round_trip::<PreviewHiding>();
         assert_keys_round_trip::<Confirmation>();
+        assert_keys_round_trip::<AfterCapture>();
+        assert_keys_round_trip::<EscAction>();
+        assert_keys_round_trip::<DefaultZoom>();
     }
 }

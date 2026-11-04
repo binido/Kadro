@@ -5,6 +5,8 @@
 mod assets;
 mod bridge;
 mod capture;
+mod document;
+mod editor;
 mod geometry;
 mod hotkeys;
 mod keys;
@@ -24,7 +26,7 @@ use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSCellImagePosition, NSEventModifierFlags,
     NSMenu, NSMenuDelegate, NSMenuItem, NSStatusBar, NSStatusItem, NSVariableStatusItemLength,
 };
-use objc2_foundation::{NSNotification, NSObject, NSObjectProtocol, NSString, ns_string};
+use objc2_foundation::{NSArray, NSNotification, NSObject, NSObjectProtocol, NSString, NSURL, ns_string};
 
 use hotkeys::Action;
 
@@ -56,6 +58,12 @@ define_class!(
         fn did_finish_launching(&self, _notification: &NSNotification) {
             self.install_status_item();
             hotkeys::install();
+        }
+
+        // Картинки, открытые через Kadro из Finder или перетащенные на его значок.
+        #[unsafe(method(application:openURLs:))]
+        fn open_urls(&self, _application: &NSApplication, urls: &NSArray<NSURL>) {
+            editor::open_urls(self.mtm(), urls);
         }
     }
 
@@ -92,6 +100,16 @@ define_class!(
         fn show_settings(&self, _sender: Option<&AnyObject>) {
             prefs::show(self.mtm());
         }
+
+        #[unsafe(method(openFile:))]
+        fn open_file(&self, _sender: Option<&AnyObject>) {
+            editor::choose_file(self.mtm());
+        }
+
+        #[unsafe(method(openClipboard:))]
+        fn open_clipboard(&self, _sender: Option<&AnyObject>) {
+            editor::open_clipboard(self.mtm());
+        }
     }
 );
 
@@ -116,6 +134,9 @@ impl AppDelegate {
             let item = self.add_item(&menu, action.title(), sel!(runAction:), "", action_icon(action));
             item.setTag(tag_for_action(index));
         }
+        menu.addItem(&NSMenuItem::separatorItem(mtm));
+        self.add_item(&menu, "Open File…", sel!(openFile:), "o", assets::FOLDER_OPEN);
+        self.add_item(&menu, "Open from Clipboard", sel!(openClipboard:), "", assets::CLIPBOARD_PASTE);
         menu.addItem(&NSMenuItem::separatorItem(mtm));
         self.add_item(&menu, "Settings…", sel!(showSettings:), ",", assets::SETTINGS);
         menu.addItem(&NSMenuItem::separatorItem(mtm));
@@ -156,6 +177,7 @@ fn action_icon(action: Action) -> &'static [u8] {
         Action::Window => assets::APP_WINDOW,
         Action::ActiveWindow => assets::APP_WINDOW_MAC,
         Action::PinLast => assets::PIN,
+        Action::EditLast => assets::SQUARE_PEN,
     }
 }
 

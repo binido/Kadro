@@ -27,7 +27,7 @@ use objc2_user_notifications::{
 use crate::capture::Shot;
 use crate::output::{self, in_background};
 use crate::settings::{Confirmation, PreviewHiding, Settings};
-use crate::{assets, geometry, pin};
+use crate::{assets, editor, geometry, pin};
 
 /// Наибольший размер миниатюры в точках.
 const MAX_SIZE: NSSize = NSSize::new(220.0, 160.0);
@@ -143,11 +143,20 @@ define_class!(
         fn save_image(&self, _sender: Option<&AnyObject>) {
             let (image, scale, shot) = (self.ivars().image.clone(), self.ivars().scale, self.ivars().shot.clone());
             in_background(move || {
-                if let Err(err) = output::save(&Settings::load().directory, &image, scale, &shot, None) {
+                if let Err(err) = output::save(&Settings::load().directory, &image, scale, Some(&shot), None) {
                     eprintln!("kadro: failed to save screenshot: {err}");
                 }
             });
             self.ivars().handled.set(true);
+            dismiss(Dismissal::Done);
+        }
+
+        #[unsafe(method(editImage:))]
+        fn edit_image(&self, _sender: Option<&AnyObject>) {
+            let ivars = self.ivars();
+            editor::open(self.mtm(), ivars.image.clone(), ivars.scale, Some(ivars.shot.clone()), "Screenshot");
+            // Снимком дальше распоряжается редактор.
+            ivars.handled.set(true);
             dismiss(Dismissal::Done);
         }
 
@@ -204,13 +213,15 @@ impl ThumbnailView {
         this.addTrackingArea(&area);
 
         let inset = 6.0;
-        // Нижний ряд по центру: Copy, Save, Pin с зазором в 8 точек.
-        let row_left = size.width / 2.0 - (3.0 * BUTTON_SIZE + 16.0) / 2.0;
+        // Нижний ряд по центру: Edit, Copy, Save, Pin с зазором в 8 точек.
+        let step = BUTTON_SIZE + 8.0;
+        let row_left = size.width / 2.0 - (4.0 * BUTTON_SIZE + 24.0) / 2.0;
         let buttons = [
             (assets::X, sel!(closePreview:), NSPoint::new(inset, size.height - BUTTON_SIZE - inset)),
-            (assets::COPY, sel!(copyImage:), NSPoint::new(row_left, inset)),
-            (assets::SAVE, sel!(saveImage:), NSPoint::new(row_left + BUTTON_SIZE + 8.0, inset)),
-            (assets::PIN, sel!(pinImage:), NSPoint::new(row_left + 2.0 * (BUTTON_SIZE + 8.0), inset)),
+            (assets::SQUARE_PEN, sel!(editImage:), NSPoint::new(row_left, inset)),
+            (assets::COPY, sel!(copyImage:), NSPoint::new(row_left + step, inset)),
+            (assets::SAVE, sel!(saveImage:), NSPoint::new(row_left + 2.0 * step, inset)),
+            (assets::PIN, sel!(pinImage:), NSPoint::new(row_left + 3.0 * step, inset)),
         ]
         .map(|(icon, action, origin)| this.add_button(mtm, icon, action, origin));
         *this.ivars().buttons.borrow_mut() = buttons.to_vec();
@@ -256,7 +267,7 @@ impl ThumbnailView {
         let directory = std::env::temp_dir().join("Kadro");
         // ponytail: кодирование идёт на главном потоке, на снимке 5K это заметная пауза в начале перетаскивания.
         // Если мешает, писать файл заранее в фоне сразу после показа превью.
-        let path = match output::save(&directory, &ivars.image, ivars.scale, &ivars.shot, None) {
+        let path = match output::save(&directory, &ivars.image, ivars.scale, Some(&ivars.shot), None) {
             Ok(path) => path,
             Err(err) => return eprintln!("kadro: failed to prepare dragged file: {err}"),
         };
@@ -356,8 +367,14 @@ pub fn confirm(mtm: MainThreadMarker, copied: bool, saved: Option<&Path>, shot: 
 
 /// Короткая плашка внизу экрана со снимком.
 fn popup(mtm: MainThreadMarker, text: &str, shot: &Shot) {
+    if let Some(screen) = screen_for(mtm, shot) {
+        popup_on(mtm, text, &screen);
+    }
+}
+
+/// Короткая плашка внизу экрана.
+pub fn popup_on(mtm: MainThreadMarker, text: &str, screen: &NSScreen) {
     hide_popup();
-    let Some(screen) = screen_for(mtm, shot) else { return };
 
     let icon = NSImageView::imageViewWithImage(&assets::icon(assets::CHECK, 16.0).unwrap_or_default(), mtm);
     icon.setContentTintColor(Some(&NSColor::whiteColor()));

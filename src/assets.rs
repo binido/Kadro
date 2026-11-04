@@ -34,6 +34,17 @@ pub const SAVE: &[u8] = include_bytes!("../assets/icons/save.svg");
 pub const X: &[u8] = include_bytes!("../assets/icons/x.svg");
 pub const CHECK: &[u8] = include_bytes!("../assets/icons/check.svg");
 pub const PIN: &[u8] = include_bytes!("../assets/icons/pin.svg");
+pub const CROP: &[u8] = include_bytes!("../assets/icons/crop.svg");
+pub const EXPAND: &[u8] = include_bytes!("../assets/icons/expand.svg");
+pub const SCALING: &[u8] = include_bytes!("../assets/icons/scaling.svg");
+pub const ZOOM_IN: &[u8] = include_bytes!("../assets/icons/zoom-in.svg");
+pub const ZOOM_OUT: &[u8] = include_bytes!("../assets/icons/zoom-out.svg");
+pub const MAXIMIZE: &[u8] = include_bytes!("../assets/icons/maximize.svg");
+pub const UNDO: &[u8] = include_bytes!("../assets/icons/undo-2.svg");
+pub const REDO: &[u8] = include_bytes!("../assets/icons/redo-2.svg");
+pub const PRINTER: &[u8] = include_bytes!("../assets/icons/printer.svg");
+pub const SQUARE_PEN: &[u8] = include_bytes!("../assets/icons/square-pen.svg");
+pub const CLIPBOARD_PASTE: &[u8] = include_bytes!("../assets/icons/clipboard-paste.svg");
 
 thread_local! {
     static FONT: OnceCell<Option<Retained<NSFontDescriptor>>> = const { OnceCell::new() };

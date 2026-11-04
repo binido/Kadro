@@ -12,12 +12,10 @@ use objc2_app_kit::{
     NSEventModifierFlags, NSGraphicsContext, NSMenu, NSMenuItem, NSPanel, NSResponder, NSScreen, NSView, NSWindow,
     NSWindowStyleMask,
 };
-use objc2_core_foundation::{CFData, CFRetained};
+use objc2_core_foundation::CFRetained;
 use objc2_core_graphics::{CGContext, CGImage, CGInterpolationQuality};
-use objc2_foundation::{NSDictionary, NSObject, NSPoint, NSRect, NSSize, NSString, ns_string};
-use objc2_image_io::{CGImageSource, kCGImagePropertyDPIWidth};
+use objc2_foundation::{NSObject, NSPoint, NSRect, NSSize, NSString, ns_string};
 
-use crate::bridge::{self, number};
 use crate::capture::Shot;
 use crate::{geometry, keys, output, preview};
 
@@ -275,6 +273,11 @@ pub fn remember_place(shot: Shot) {
     LAST_SHOT.set(Some(shot));
 }
 
+/// Где и как сделан последний снимок, если он был в этом запуске.
+pub fn last_shot() -> Option<Shot> {
+    LAST_SHOT.with_borrow(Clone::clone)
+}
+
 /// Закрепляет последний снимок. Если снимков ещё не было, только сигналит.
 pub fn pin_last(mtm: MainThreadMarker) {
     match load_last() {
@@ -286,21 +289,8 @@ pub fn pin_last(mtm: MainThreadMarker) {
     }
 }
 
-fn load_last() -> Option<(CFRetained<CGImage>, f64)> {
-    decode(&std::fs::read(last_path()).ok()?)
-}
-
-/// Разбирает PNG и его масштаб из DPI, записанного при кодировании.
-fn decode(bytes: &[u8]) -> Option<(CFRetained<CGImage>, f64)> {
-    let source = unsafe { CGImageSource::with_data(&CFData::from_bytes(bytes), None) }?;
-    let image = unsafe { source.image_at_index(0, None) }?;
-    let properties = unsafe { source.properties_at_index(0, None) }?;
-    // SAFETY: свойства изображения - словарь со строковыми ключами, CFDictionary и NSDictionary взаимозаменяемы.
-    let properties: &NSDictionary<NSString, AnyObject> = unsafe { bridge::toll_free(&*properties) };
-    // SAFETY: ключ - константа ImageIO типа CFString, а CFString и NSString взаимозаменяемы.
-    let key: &NSString = unsafe { bridge::toll_free(kCGImagePropertyDPIWidth) };
-    let dpi = number(properties, key).map_or(72.0, |n| n.doubleValue());
-    Some((image, (dpi / 72.0).max(1.0)))
+pub fn load_last() -> Option<(CFRetained<CGImage>, f64)> {
+    output::decode(&std::fs::read(last_path()).ok()?)
 }
 
 #[cfg(test)]
@@ -325,7 +315,7 @@ mod tests {
         .unwrap();
         let image = CGBitmapContextCreateImage(Some(&context)).unwrap();
         let png = output::encode_png(&image, 2.0).unwrap();
-        let (decoded, scale) = decode(&png).unwrap();
+        let (decoded, scale) = output::decode(&png).unwrap();
         assert_eq!(scale, 2.0);
         assert_eq!((CGImage::width(Some(&decoded)), CGImage::height(Some(&decoded))), (4, 2));
     }

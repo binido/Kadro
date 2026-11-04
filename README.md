@@ -19,6 +19,14 @@ Output:
 - A capture is never lost silently: if the preview hides or is replaced by a new capture before the screenshot was copied, saved or dragged, Kadro copies it. Only Close discards it.
 - Without the preview, copying and saving are confirmed by a pop-up, a macOS notification, or not at all.
 
+Editor:
+
+- Opens from the preview (Edit), the menu (Edit Last Screenshot, Open File…, Open from Clipboard), a shortcut, or right after a capture when Show after capture is set to Editor. PNG, JPEG, HEIC and GIF files can be opened with Kadro from Finder.
+- Zoom with pinch or ⌘ + scroll (or the plain scroll wheel, if chosen), ⌘+ / ⌘− / ⌘0 (100%) / ⌘9 (fit), or the toolbar. 100% is one image pixel per screen pixel.
+- Crop (C or the toolbar, drag, Return), Uncrop to bring back everything cropped away, and Resize with a locked aspect ratio.
+- Every edit can be undone (⌘Z) and redone (⇧⌘Z). Edits never lose pixels: the result is always redrawn from the original capture.
+- Copy (⌘C), Save to the screenshots folder (⌘S), Save As (⇧⌘S, format from the extension), Print (⌘P). Esc copies, saves or just closes, as chosen in settings.
+
 Pinned screenshots:
 
 - Pin a capture from its preview, or pin the last screenshot from the menu or a shortcut. The pin opens exactly where the capture was taken, at 100% (one image pixel per screen pixel).
@@ -46,16 +54,24 @@ A compact native preferences window uses Space Grotesk typography and Lucide ico
 - Screenshots folder, file name template, save format, Retina downscaling
 - Cursor in screenshots
 - Launch at login
-- After screenshot: preview, copy, save
+- Show after capture: preview, editor, nothing
+- After screenshot: copy, save
 - Hide preview automatically or manually
 - Confirmation without preview: pop-up, notification, none
+
+**Editor**
+
+- What Esc does: copy and close, save and close, just close
+- Open screenshots fitted to the window or at 100% when they fit
+- Keep the editor above other windows
+- Zoom with the scroll wheel
 
 **Shortcuts**
 
 - Capture region, repeat last region
 - Capture full screen, now or in 3 seconds
 - Capture window, capture active window
-- Pin last screenshot
+- Pin last screenshot, edit last screenshot
 - Every shortcut can be recorded or cleared, with conflict detection against Kadro, macOS and other apps
 
 ## Technical constraints
