@@ -7,6 +7,7 @@
 use std::cell::{Cell, OnceCell, RefCell};
 use std::path::Path;
 use std::ptr::NonNull;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use block2::RcBlock;
 use objc2::rc::{Retained, Weak};
@@ -16,13 +17,13 @@ use objc2_app_kit::{
     NSAffineTransformNSAppKitAdditions, NSAlert, NSAlertFirstButtonReturn, NSApplication, NSAutoresizingMaskOptions,
     NSBackingStoreType, NSBeep, NSBezelStyle, NSBezierPath, NSButton, NSButtonType, NSClipView, NSColor, NSColorSpace,
     NSColorWell, NSColorWellStyle, NSCompositingOperation, NSControlStateValueOff, NSControlStateValueOn,
-    NSControlTextEditingDelegate, NSEvent, NSEventModifierFlags, NSFloatingWindowLevel, NSGraphicsContext, NSImage,
-    NSImageScaling, NSImageView, NSModalResponseOK, NSNormalWindowLevel, NSOpenPanel, NSPasteboard,
-    NSPasteboardTypePNG, NSPasteboardTypeTIFF, NSPopUpButton, NSPrintOperation, NSRectFill, NSRectFillUsingOperation,
-    NSResponder, NSSavePanel, NSScreen, NSScrollView, NSStackView, NSStackViewGravity, NSTextField,
-    NSTextFieldDelegate, NSToolbar, NSToolbarDelegate, NSToolbarDisplayMode, NSToolbarFlexibleSpaceItemIdentifier,
-    NSToolbarItem, NSUserInterfaceLayoutOrientation, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
-    NSWindowToolbarStyle,
+    NSControlTextEditingDelegate, NSCursor, NSEvent, NSEventModifierFlags, NSFloatingWindowLevel, NSGraphicsContext,
+    NSImage, NSImageScaling, NSImageView, NSModalResponseOK, NSNormalWindowLevel, NSOpenPanel, NSPasteboard,
+    NSPasteboardTypePNG, NSPasteboardTypeString, NSPasteboardTypeTIFF, NSPopUpButton, NSPrintOperation, NSRectFill,
+    NSRectFillUsingOperation, NSResponder, NSSavePanel, NSScreen, NSScrollView, NSStackView, NSStackViewGravity,
+    NSTextField, NSTextFieldDelegate, NSToolbar, NSToolbarDelegate, NSToolbarDisplayMode,
+    NSToolbarFlexibleSpaceItemIdentifier, NSToolbarItem, NSTrackingArea, NSTrackingAreaOptions,
+    NSUserInterfaceLayoutOrientation, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask, NSWindowToolbarStyle,
 };
 use objc2_core_foundation::CFRetained;
 use objc2_core_graphics::CGImage;
@@ -32,19 +33,19 @@ use objc2_foundation::{
 };
 use objc2_uniform_type_identifiers::UTType;
 
-use crate::annotation::{self, Annotation, Color, Grip, Point, Size, Tool};
+use crate::annotation::{self, Annotation, Color, Grip, Point, Size, Snap, Tool};
 use crate::capture::Shot;
 use crate::document::{self, Doc, History, PixelRect, State, render};
 use crate::paint::{self, Mode};
 use crate::settings::{DefaultZoom, EscAction, Settings};
-use crate::{assets, keys, output, pin, preview};
+use crate::{assets, keys, measure, output, overlay, pin, preview};
 
 const ZOOM_STEP: f64 = 1.25;
 const MIN_ZOOM: f64 = 0.05;
 const MAX_ZOOM: f64 = 32.0;
 /// Окно при открытии занимает не больше этой доли экрана.
 const MAX_SCREEN_SHARE: f64 = 0.85;
-const MIN_WINDOW: NSSize = NSSize::new(640.0, 480.0);
+const MIN_WINDOW: NSSize = NSSize::new(640.0, 540.0);
 const PALETTE_WIDTH: f64 = 44.0;
 /// На сколько экранных точек можно промахнуться мимо аннотации.
 const HIT_TOLERANCE: f64 = 6.0;
@@ -57,7 +58,12 @@ thread_local! {
     static EDITORS: RefCell<Vec<Retained<Editor>>> = const { RefCell::new(Vec::new()) };
     // Закрытые редакторы живут до конца обработчика закрытия, освобождать их посреди него нельзя.
     static RETIRED: RefCell<Vec<Retained<Editor>>> = const { RefCell::new(Vec::new()) };
+    /// Редактор, который ждёт снимок области для вставки.
+    static ADD_TARGET: RefCell<Option<Weak<Editor>>> = const { RefCell::new(None) };
 }
+
+/// Следующий снимок области идёт в редактор, а не в буфер обмена и файл. Читается из потока захвата.
+static ADDING: AtomicBool = AtomicBool::new(false);
 
 /// Кнопка панели инструментов: идентификатор, подпись, иконка и действие.
 struct Button {
@@ -67,7 +73,7 @@ struct Button {
     action: Sel,
 }
 
-fn buttons() -> [Button; 13] {
+fn buttons() -> [Button; 15] {
     [
         Button { id: "undo", label: "Undo", icon: assets::UNDO, action: sel!(undoEdit:) },
         Button { id: "redo", label: "Redo", icon: assets::REDO, action: sel!(redoEdit:) },
@@ -75,18 +81,20 @@ fn buttons() -> [Button; 13] {
         Button { id: "uncrop", label: "Uncrop", icon: assets::EXPAND, action: sel!(uncrop:) },
         Button { id: "resize", label: "Resize", icon: assets::SCALING, action: sel!(resize:) },
         Button { id: "rasterize", label: "Rasterize", icon: assets::LAYERS, action: sel!(rasterize:) },
+        Button { id: "addCapture", label: "Add Capture", icon: assets::IMAGE_PLUS, action: sel!(addCapture:) },
         Button { id: "zoomOut", label: "Zoom Out", icon: assets::ZOOM_OUT, action: sel!(zoomOut:) },
         Button { id: "zoomFit", label: "Fit", icon: assets::MAXIMIZE, action: sel!(zoomToFit:) },
         Button { id: "zoomIn", label: "Zoom In", icon: assets::ZOOM_IN, action: sel!(zoomIn:) },
         Button { id: "copy", label: "Copy", icon: assets::COPY, action: sel!(copyImage:) },
         Button { id: "save", label: "Save", icon: assets::SAVE, action: sel!(saveImage:) },
         Button { id: "saveAs", label: "Save As", icon: assets::FOLDER_OPEN, action: sel!(saveImageAs:) },
+        Button { id: "exportGif", label: "Export GIF", icon: assets::FILM, action: sel!(exportGif:) },
         Button { id: "print", label: "Print", icon: assets::PRINTER, action: sel!(printImage:) },
     ]
 }
 
 /// Порядок кнопок: группы разделены гибким пробелом.
-const TOOLBAR_LAYOUT: [&str; 21] = [
+const TOOLBAR_LAYOUT: [&str; 23] = [
     "undo",
     "redo",
     "",
@@ -98,6 +106,7 @@ const TOOLBAR_LAYOUT: [&str; 21] = [
     "size",
     "style",
     "rasterize",
+    "addCapture",
     "",
     "zoomOut",
     "zoomFit",
@@ -106,49 +115,73 @@ const TOOLBAR_LAYOUT: [&str; 21] = [
     "copy",
     "save",
     "saveAs",
+    "exportGif",
     "print",
     "",
 ];
 
-/// Инструменты на панели слева: инструмент, подсказка, иконка и клавиша. None - выделение.
-const PALETTE: [(Option<Tool>, &str, &[u8], u16); 13] = [
-    (None, "Select (V)", assets::POINTER, keys::V),
-    (Some(Tool::Arrow), "Arrow (A)", assets::ARROW, keys::A),
-    (Some(Tool::Line), "Line (L)", assets::LINE, keys::L),
-    (Some(Tool::Rect), "Rectangle (R)", assets::RECT, keys::R),
-    (Some(Tool::Oval), "Oval (O)", assets::OVAL, keys::O),
-    (Some(Tool::Pen), "Pen (P)", assets::PEN, keys::P),
-    (Some(Tool::Highlighter), "Highlighter (H)", assets::HIGHLIGHTER, keys::H),
-    (Some(Tool::Text), "Text (T)", assets::TEXT, keys::T),
-    (Some(Tool::Counter), "Counter (N)", assets::COUNTER, keys::N),
-    (Some(Tool::Blur), "Blur (B)", assets::BLUR, keys::B),
-    (Some(Tool::Pixelate), "Pixelate (X)", assets::PIXELATE, keys::X),
-    (Some(Tool::Spotlight), "Spotlight (S)", assets::SPOTLIGHT, keys::S),
-    (Some(Tool::Magnifier), "Magnifier (M)", assets::MAGNIFIER, keys::M),
+/// Что делает мышь на холсте.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pointer {
+    Select,
+    Draw(Tool),
+    /// Пипетка: показывает цвет под мышью и копирует его по щелчку.
+    Pick,
+}
+
+/// Инструменты на панели слева: что делает мышь, подсказка, иконка и клавиша.
+const PALETTE: [(Pointer, &str, &[u8], u16); 15] = [
+    (Pointer::Select, "Select (V)", assets::POINTER, keys::V),
+    (Pointer::Draw(Tool::Arrow), "Arrow (A)", assets::ARROW, keys::A),
+    (Pointer::Draw(Tool::Line), "Line (L)", assets::LINE, keys::L),
+    (Pointer::Draw(Tool::Rect), "Rectangle (R)", assets::RECT, keys::R),
+    (Pointer::Draw(Tool::Oval), "Oval (O)", assets::OVAL, keys::O),
+    (Pointer::Draw(Tool::Pen), "Pen (P)", assets::PEN, keys::P),
+    (Pointer::Draw(Tool::Highlighter), "Highlighter (H)", assets::HIGHLIGHTER, keys::H),
+    (Pointer::Draw(Tool::Text), "Text (T)", assets::TEXT, keys::T),
+    (Pointer::Draw(Tool::Counter), "Counter (N)", assets::COUNTER, keys::N),
+    (Pointer::Draw(Tool::Blur), "Blur (B)", assets::BLUR, keys::B),
+    (Pointer::Draw(Tool::Pixelate), "Pixelate (X)", assets::PIXELATE, keys::X),
+    (Pointer::Draw(Tool::Spotlight), "Spotlight (S)", assets::SPOTLIGHT, keys::S),
+    (Pointer::Draw(Tool::Magnifier), "Magnifier (M)", assets::MAGNIFIER, keys::M),
+    (Pointer::Draw(Tool::Ruler), "Ruler (U), click to measure between edges", assets::RULER, keys::U),
+    (Pointer::Pick, "Color Picker (I)", assets::PIPETTE, keys::I),
 ];
 
 /// Что сейчас делает мышь.
 enum Drag {
     /// Новая аннотация, ещё не в документе.
     Draw(Annotation),
-    /// Перенос аннотации `index`. `current` - как она выглядит сейчас, `moved` - сдвинули ли её вообще.
-    Move { index: usize, grip: Grip, from: Point, original: Annotation, current: Annotation, moved: bool },
+    /// Перенос аннотации `index`. `current` - как она выглядит сейчас, `moved` - сдвинули ли её вообще,
+    /// `snap` - к чему она прилипла.
+    Move {
+        index: usize,
+        grip: Grip,
+        from: Point,
+        original: Box<Annotation>,
+        current: Annotation,
+        moved: bool,
+        snap: Snap,
+    },
 }
 
 struct EditorIvars {
-    /// Основы документа. 0 - исходный снимок, остальные появляются при впечатывании аннотаций.
-    bases: RefCell<Vec<CFRetained<CGImage>>>,
+    /// Основы документа и добавленные снимки. 0 - исходный снимок, основы появляются при впечатывании аннотаций.
+    images: RefCell<Vec<CFRetained<CGImage>>>,
     /// Пикселей снимка на точку экрана, где его сняли. Нужен для DPI при экспорте и толщины линий.
     scale: f64,
     shot: Option<Shot>,
     history: RefCell<History<Doc>>,
     rendered: RefCell<CFRetained<CGImage>>,
-    /// Инструмент рисования. None - выделение.
-    tool: Cell<Option<Tool>>,
+    pointer: Cell<Pointer>,
     color: Cell<Color>,
     size: Cell<Size>,
     /// Выбранный стиль каждого инструмента, по `Tool::index`.
-    styles: Cell<[usize; 12]>,
+    styles: Cell<[usize; Tool::ALL.len()]>,
+    /// Запись цвета пипетки, по номеру в `measure::FORMATS`.
+    pick_format: Cell<usize>,
+    /// Цвет под пипеткой и где он, в пикселях основы.
+    hover: Cell<Option<(Point, [u8; 3])>>,
     selected: Cell<Option<usize>>,
     drag: RefCell<Option<Drag>>,
     /// Аннотация, которой нет на картинке холста, пока её тянут.
@@ -238,10 +271,20 @@ define_class!(
             self.print();
         }
 
+        #[unsafe(method(addCapture:))]
+        fn add_capture_action(&self, _sender: Option<&AnyObject>) {
+            self.add_capture();
+        }
+
+        #[unsafe(method(exportGif:))]
+        fn export_gif_action(&self, _sender: Option<&AnyObject>) {
+            self.export_gif();
+        }
+
         #[unsafe(method(chooseTool:))]
         fn choose_tool_action(&self, sender: &NSButton) {
-            if let Some((tool, ..)) = PALETTE.get(sender.tag() as usize) {
-                self.choose_tool(*tool);
+            if let Some((pointer, ..)) = PALETTE.get(sender.tag() as usize) {
+                self.choose(*pointer);
             }
         }
 
@@ -263,8 +306,11 @@ define_class!(
 
         #[unsafe(method(styleChanged:))]
         fn style_changed(&self, sender: &NSPopUpButton) {
-            let Some(tool) = self.styled_tool() else { return };
             let style = sender.indexOfSelectedItem().max(0) as usize;
+            if self.ivars().pointer.get() == Pointer::Pick && self.ivars().selected.get().is_none() {
+                return self.ivars().pick_format.set(style);
+            }
+            let Some(tool) = self.styled_tool() else { return };
             let mut styles = self.ivars().styles.get();
             styles[tool.index()] = style;
             self.ivars().styles.set(styles);
@@ -410,11 +456,11 @@ impl Editor {
     }
 
     fn base(&self, doc: &Doc) -> CFRetained<CGImage> {
-        self.ivars().bases.borrow()[doc.base].clone()
+        self.ivars().images.borrow()[doc.base].clone()
     }
 
     fn original_size(&self) -> (f64, f64) {
-        let image = &self.ivars().bases.borrow()[0];
+        let image = &self.ivars().images.borrow()[0];
         (CGImage::width(Some(image)) as f64, CGImage::height(Some(image)) as f64)
     }
 
@@ -478,25 +524,27 @@ impl Editor {
         if doc.annotations.is_empty() {
             return NSBeep();
         }
-        let Some(image) = document::rasterize(&self.base(&doc), &doc.annotations, self.ivars().scale) else {
+        let Some(image) = document::rasterize(&self.ivars().images.borrow(), &doc, self.ivars().scale) else {
             return eprintln!("kadro: failed to rasterize annotations");
         };
-        let base = {
-            let mut bases = self.ivars().bases.borrow_mut();
-            bases.push(image);
-            bases.len() - 1
-        };
+        let base = self.keep(image);
         self.ivars().selected.set(None);
         self.sync_controls();
         self.apply(Doc { annotations: Vec::new(), base, ..doc });
     }
 
+    /// Запоминает картинку в списке картинок редактора и возвращает её номер.
+    fn keep(&self, image: CFRetained<CGImage>) -> usize {
+        let mut images = self.ivars().images.borrow_mut();
+        images.push(image);
+        images.len() - 1
+    }
+
     /// Перерисовывает результат и подгоняет под него холст.
     fn refresh(&self, refit: bool) {
         let doc = self.doc();
-        let base = self.base(&doc);
-        let Some(image) = render(&base, doc.state, &doc.annotations, self.ivars().hidden.get(), self.ivars().scale)
-        else {
+        let rendered = render(&self.ivars().images.borrow(), &doc, self.ivars().hidden.get(), self.ivars().scale);
+        let Some(image) = rendered else {
             return eprintln!("kadro: failed to render the edited image");
         };
         let size = self.points(doc.state.width, doc.state.height);
@@ -573,13 +621,17 @@ impl Editor {
         state.crop.width / (self.canvas().frame().size.width * self.scroll().magnification())
     }
 
-    fn choose_tool(&self, tool: Option<Tool>) {
+    fn choose(&self, pointer: Pointer) {
         self.canvas().set_cropping(false);
-        self.ivars().tool.set(tool);
+        self.ivars().pointer.set(pointer);
         if let Some(palette) = self.ivars().palette.get() {
             for (button, (entry, ..)) in palette.iter().zip(PALETTE) {
-                button.setState(if entry == tool { NSControlStateValueOn } else { NSControlStateValueOff });
+                button.setState(if entry == pointer { NSControlStateValueOn } else { NSControlStateValueOff });
             }
+        }
+        if pointer != Pointer::Pick {
+            self.ivars().hover.set(None);
+            NSCursor::arrowCursor().set();
         }
         self.select(None);
     }
@@ -594,7 +646,10 @@ impl Editor {
     fn styled_tool(&self) -> Option<Tool> {
         match self.ivars().selected.get() {
             Some(index) => self.ivars().history.borrow().current().annotations.get(index).map(|a| a.tool),
-            None => self.ivars().tool.get(),
+            None => match self.ivars().pointer.get() {
+                Pointer::Draw(tool) => Some(tool),
+                Pointer::Select | Pointer::Pick => None,
+            },
         }
     }
 
@@ -614,7 +669,12 @@ impl Editor {
             popup.selectItemAtIndex(Size::ALL.iter().position(|s| *s == size).unwrap_or(0) as isize);
         }
         if let Some(popup) = ivars.style_popup.get() {
-            let styles = tool.map_or(&[][..], Tool::styles);
+            let picking = selected.is_none() && ivars.pointer.get() == Pointer::Pick;
+            let (styles, style) = if picking {
+                (&measure::FORMATS[..], ivars.pick_format.get())
+            } else {
+                (tool.map_or(&[][..], Tool::styles), style)
+            };
             popup.removeAllItems();
             let titles: Vec<_> = styles.iter().map(|s| NSString::from_str(s)).collect();
             popup.addItemsWithTitles(&NSArray::from_retained_slice(&titles));
@@ -649,36 +709,51 @@ impl Editor {
         let tolerance = HIT_TOLERANCE * self.base_per_point();
         let hit = annotation::hit_test(&doc.annotations, p, tolerance);
         let text_hit = hit.map(|(i, _)| i).filter(|i| doc.annotations[*i].tool == Tool::Text);
-        let tool = self.ivars().tool.get();
+        let pointer = self.ivars().pointer.get();
+        if pointer == Pointer::Pick {
+            return self.pick(p);
+        }
         // Двойной щелчок по тексту правит его любым инструментом, а инструментом текста - и одиночный.
         if let Some(index) = text_hit
-            && (clicks >= 2 || tool == Some(Tool::Text))
+            && (clicks >= 2 || pointer == Pointer::Draw(Tool::Text))
         {
             return self.edit_text(index);
         }
         // Инструментом рисования берётся только выделенная аннотация, иначе рядом с другими нельзя было бы рисовать.
-        let grab = match tool {
-            None => hit,
-            Some(_) => self.ivars().selected.get().and_then(|i| doc.annotations[i].hit(p, tolerance).map(|g| (i, g))),
+        let grab = match pointer {
+            Pointer::Draw(_) => {
+                self.ivars().selected.get().and_then(|i| doc.annotations[i].hit(p, tolerance).map(|g| (i, g)))
+            }
+            Pointer::Select | Pointer::Pick => hit,
         };
         if let Some((index, grip)) = grab {
             self.select(Some(index));
-            let original = doc.annotations[index].clone();
+            let original = Box::new(doc.annotations[index].clone());
+            let current = (*original).clone();
             *self.ivars().drag.borrow_mut() =
-                Some(Drag::Move { index, grip, from: p, current: original.clone(), original, moved: false });
+                Some(Drag::Move { index, grip, from: p, current, original, moved: false, snap: Snap::default() });
             return;
         }
         self.select(None);
-        match tool {
-            None => {}
-            Some(Tool::Text) => self.add_text(p),
-            Some(tool) => *self.ivars().drag.borrow_mut() = Some(Drag::Draw(self.new_annotation(tool, p))),
+        match pointer {
+            Pointer::Select | Pointer::Pick => {}
+            Pointer::Draw(Tool::Text) => self.add_text(p),
+            Pointer::Draw(tool) => *self.ivars().drag.borrow_mut() = Some(Drag::Draw(self.new_annotation(tool, p))),
         }
         self.redraw_marks();
     }
 
     fn drag_to(&self, p: Point) {
         let mut started = None;
+        let tolerance = HIT_TOLERANCE * self.base_per_point();
+        let targets = |except: usize| {
+            let doc = self.ivars().history.borrow();
+            let doc = doc.current();
+            let crop = doc.state.crop;
+            let canvas = (Point::new(crop.x, crop.y), Point::new(crop.x + crop.width, crop.y + crop.height));
+            let others = doc.annotations.iter().enumerate().filter(|(i, _)| *i != except).map(|(_, a)| a.bounds());
+            std::iter::once(canvas).chain(others).collect::<Vec<_>>()
+        };
         match self.ivars().drag.borrow_mut().as_mut() {
             None => return,
             Some(Drag::Draw(a)) => match a.tool {
@@ -686,9 +761,14 @@ impl Editor {
                 Tool::Text | Tool::Counter => a.points[0] = p,
                 _ => a.points[1] = p,
             },
-            Some(Drag::Move { index, grip, from, original, current, moved }) => {
+            Some(Drag::Move { index, grip, from, original, current, moved, snap }) => {
                 *current = match *grip {
-                    Grip::Body => original.moved(p.x - from.x, p.y - from.y),
+                    Grip::Body => {
+                        let shifted = original.moved(p.x - from.x, p.y - from.y);
+                        // Края и центр прилипают к краям и центрам холста и других аннотаций.
+                        *snap = annotation::snap(shifted.bounds(), &targets(*index), tolerance);
+                        shifted.moved(snap.dx, snap.dy)
+                    }
                     Grip::Point(i) => original.with_point(i, p),
                 };
                 if !*moved {
@@ -709,6 +789,13 @@ impl Editor {
         let Some(drag) = self.ivars().drag.take() else { return };
         let mut doc = self.doc();
         match drag {
+            Drag::Draw(a) if a.tool == Tool::Ruler && a.is_degenerate() => {
+                let rulers = self.edge_rulers(&a, &doc);
+                if rulers.is_empty() {
+                    return self.redraw_marks();
+                }
+                doc.annotations.extend(rulers);
+            }
             Drag::Draw(a) if !a.is_degenerate() => {
                 doc.annotations.push(a);
                 self.ivars().selected.set(Some(doc.annotations.len() - 1));
@@ -721,6 +808,124 @@ impl Editor {
         }
         self.apply(doc);
         self.sync_controls();
+    }
+
+    /// Щелчок линейкой без протягивания: две линейки, поперёк и вдоль, между краями ровного участка под точкой.
+    fn edge_rulers(&self, click: &Annotation, doc: &Doc) -> Vec<Annotation> {
+        let base = self.base(doc);
+        let crop = doc.state.crop;
+        let (left, top) = (crop.x as usize, crop.y as usize);
+        let (right, bottom) = (left + crop.width as usize, top + crop.height as usize);
+        let p = click.points[0];
+        let x = (p.x.floor().max(0.0) as usize).clamp(left, right - 1);
+        let y = (p.y.floor().max(0.0) as usize).clamp(top, bottom - 1);
+        let ruler = |from: Point, to: Point| Annotation { points: vec![from, to], ..click.clone() };
+        let mut rulers = Vec::new();
+        if let Some(row) = measure::row(&base, y) {
+            let (start, end) = measure::span(&row[left..right], x - left);
+            let y = y as f64 + 0.5;
+            rulers.push(ruler(Point::new((left + start) as f64, y), Point::new((left + end + 1) as f64, y)));
+        }
+        if let Some(column) = measure::column(&base, x) {
+            let (start, end) = measure::span(&column[top..bottom], y - top);
+            let x = x as f64 + 0.5;
+            rulers.push(ruler(Point::new(x, (top + start) as f64), Point::new(x, (top + end + 1) as f64)));
+        }
+        rulers
+    }
+
+    /// Пиксель результата под точкой основы.
+    fn output_pixel(&self, p: Point) -> (usize, usize) {
+        let state = self.state();
+        let x = (p.x - state.crop.x) * state.width / state.crop.width;
+        let y = (p.y - state.crop.y) * state.height / state.crop.height;
+        ((x.max(0.0) as usize).min(state.width as usize - 1), (y.max(0.0) as usize).min(state.height as usize - 1))
+    }
+
+    /// Пипетка над холстом: запоминает цвет под мышью для рамки рядом с ней.
+    fn hover(&self, p: Option<Point>) {
+        if self.ivars().pointer.get() != Pointer::Pick {
+            return;
+        }
+        let sampled = p.and_then(|p| {
+            let (x, y) = self.output_pixel(p);
+            measure::pixel(&self.rendered(), x, y).map(|color| (p, color))
+        });
+        if sampled.is_some() {
+            NSCursor::crosshairCursor().set();
+        }
+        self.ivars().hover.set(sampled);
+        self.redraw_marks();
+    }
+
+    /// Копирует цвет пикселя под точкой в выбранной записи.
+    fn pick(&self, p: Point) {
+        let (x, y) = self.output_pixel(p);
+        let Some(color) = measure::pixel(&self.rendered(), x, y) else { return NSBeep() };
+        let text = measure::format(color, self.ivars().pick_format.get());
+        let pasteboard = NSPasteboard::generalPasteboard();
+        pasteboard.clearContents();
+        // SAFETY: системная константа типа буфера обмена живёт весь процесс.
+        pasteboard.setString_forType(&NSString::from_str(&text), unsafe { NSPasteboardTypeString });
+        if let Some(screen) = self.window().screen() {
+            preview::popup_on(self.mtm(), &format!("Copied {text}"), &screen);
+        }
+    }
+
+    /// Ждёт снимок области и кладёт его на холст. Снимок не копируется и не сохраняется.
+    fn add_capture(&self) {
+        ADD_TARGET.set(Some(Weak::new(self)));
+        ADDING.store(true, Ordering::SeqCst);
+        if !overlay::select(self.mtm(), overlay::Mode::Region) {
+            cancel_adding();
+        }
+    }
+
+    /// Кладёт снимок в середину видимой части. Плотность пикселей подгоняется под основу,
+    /// а слишком большой снимок уменьшается, чтобы поместиться.
+    fn place(&self, image: CFRetained<CGImage>, capture_scale: f64) {
+        let mut doc = self.doc();
+        let crop = doc.state.crop;
+        let density = self.ivars().scale / capture_scale;
+        let (width, height) =
+            (CGImage::width(Some(&image)) as f64 * density, CGImage::height(Some(&image)) as f64 * density);
+        let fit = (crop.width * 0.9 / width).min(crop.height * 0.9 / height).min(1.0);
+        let (width, height) = (width * fit, height * fit);
+        let center = Point::new(crop.x + crop.width / 2.0, crop.y + crop.height / 2.0);
+        let mut placed = self.new_annotation(Tool::Image, Point::new(center.x - width / 2.0, center.y - height / 2.0));
+        placed.points[1] = Point::new(center.x + width / 2.0, center.y + height / 2.0);
+        placed.image = self.keep(image);
+        doc.annotations.push(placed);
+        self.choose(Pointer::Select);
+        self.ivars().selected.set(Some(doc.annotations.len() - 1));
+        self.apply(doc);
+        self.sync_controls();
+        NSApplication::sharedApplication(self.mtm()).activate();
+        self.window().makeKeyAndOrderFront(None);
+    }
+
+    /// GIF из двух кадров по секунде: с аннотациями и без них.
+    fn export_gif(&self) {
+        let doc = self.doc();
+        let plain = render(&self.ivars().images.borrow(), &Doc { annotations: Vec::new(), ..doc.clone() }, None, 1.0);
+        let (Some(plain), false) = (plain, doc.annotations.is_empty()) else { return NSBeep() };
+        let panel = NSSavePanel::savePanel(self.mtm());
+        panel.setNameFieldStringValue(&NSString::from_str(&format!("{}.gif", self.window().title())));
+        panel.setCanCreateDirectories(true);
+        if panel.runModal() != NSModalResponseOK {
+            return;
+        }
+        let Some(path) = panel.URL().and_then(|url| url.path()) else { return };
+        let gif = output::encode_gif(&[&self.rendered(), &plain], 1.0);
+        if let Err(err) = gif
+            .ok_or_else(|| std::io::Error::other("encoding failed"))
+            .and_then(|bytes| std::fs::write(path.to_string(), bytes))
+        {
+            let alert = NSAlert::new(self.mtm());
+            alert.setMessageText(ns_string!("Couldn't export the GIF"));
+            alert.setInformativeText(&NSString::from_str(&err.to_string()));
+            alert.runModal();
+        }
     }
 
     fn delete_selected(&self) -> bool {
@@ -795,17 +1000,20 @@ impl Editor {
         transform.concat();
 
         let scale = self.ivars().scale;
+        let images = self.ivars().images.borrow();
         let drag = self.ivars().drag.borrow();
         let marked = match drag.as_ref() {
             Some(Drag::Draw(a)) => {
                 let number = doc.annotations.iter().filter(|a| a.tool == Tool::Counter).count() + 1;
-                paint::draw_one(a, number, None, scale, Mode::Live);
+                paint::draw_one(a, number, None, &images, scale, Mode::Live);
                 None
             }
-            Some(Drag::Move { index, current, moved, .. }) => {
+            Some(Drag::Move { index, current, moved, snap, .. }) => {
                 if *moved {
                     let base = self.base(doc);
-                    paint::draw_one(current, paint::number(&doc.annotations, *index), Some(&base), scale, Mode::Final);
+                    let number = paint::number(&doc.annotations, *index);
+                    paint::draw_one(current, number, Some(&base), &images, scale, Mode::Final);
+                    guides(*snap, crop, self.base_per_point());
                 }
                 Some(current)
             }
@@ -813,6 +1021,9 @@ impl Editor {
         };
         if let Some(annotation) = marked {
             handles(annotation, self.base_per_point(), scale);
+        }
+        if let Some((p, color)) = self.ivars().hover.get() {
+            swatch(p, color, self.ivars().pick_format.get(), self.base_per_point());
         }
         NSGraphicsContext::restoreGraphicsState_class();
     }
@@ -936,10 +1147,7 @@ impl Editor {
 
 /// Рамка выделенной аннотации и ручки на её точках. Размеры - в экранных точках при любом масштабе.
 fn handles(annotation: &Annotation, base_per_point: f64, scale: f64) {
-    let (min, max) = match annotation.tool {
-        Tool::Text | Tool::Counter => annotation.extent_rect(),
-        _ => annotation.rect(),
-    };
+    let (min, max) = annotation.bounds();
     let pad = 4.0 * base_per_point
         + if matches!(annotation.tool, Tool::Pen | Tool::Highlighter) {
             annotation.size.stroke() * scale * 2.0
@@ -975,6 +1183,58 @@ fn handles(annotation: &Annotation, base_per_point: f64, scale: f64) {
     }
 }
 
+/// Линии, к которым прилипла переносимая аннотация, через всю видимую часть.
+fn guides(snap: Snap, crop: PixelRect, base_per_point: f64) {
+    let path = NSBezierPath::bezierPath();
+    if let Some(x) = snap.x {
+        path.moveToPoint(NSPoint::new(x, crop.y));
+        path.lineToPoint(NSPoint::new(x, crop.y + crop.height));
+    }
+    if let Some(y) = snap.y {
+        path.moveToPoint(NSPoint::new(crop.x, y));
+        path.lineToPoint(NSPoint::new(crop.x + crop.width, y));
+    }
+    path.setLineWidth(base_per_point);
+    NSColor::systemPinkColor().setStroke();
+    path.stroke();
+}
+
+/// Квадрат с цветом под пипеткой и его запись рядом с мышью. Размеры в экранных точках.
+fn swatch(p: Point, color: [u8; 3], format: usize, base_per_point: f64) {
+    let [red, green, blue] = color.map(|c| f64::from(c) / 255.0);
+    let side = 28.0 * base_per_point;
+    let at = NSPoint::new(p.x + 16.0 * base_per_point, p.y + 16.0 * base_per_point);
+    let square = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(
+        NSRect::new(at, NSSize::new(side, side)),
+        4.0 * base_per_point,
+        4.0 * base_per_point,
+    );
+    NSColor::colorWithSRGBRed_green_blue_alpha(red, green, blue, 1.0).setFill();
+    square.fill();
+    square.setLineWidth(2.0 * base_per_point);
+    NSColor::whiteColor().setStroke();
+    square.stroke();
+    let font = objc2_app_kit::NSFont::monospacedSystemFontOfSize_weight(12.0 * base_per_point, 0.0);
+    let white = NSColor::whiteColor();
+    // SAFETY: ключи - системные константы атрибутов текста, они живут весь процесс.
+    let keys = unsafe { [objc2_app_kit::NSFontAttributeName, objc2_app_kit::NSForegroundColorAttributeName] };
+    let attributes = objc2_foundation::NSDictionary::<NSString, AnyObject>::from_slices(
+        &keys,
+        &[&*font as &AnyObject, &*white as &AnyObject],
+    );
+    let label = NSString::from_str(&measure::format(color, format));
+    let size = unsafe { objc2_app_kit::NSStringDrawing::sizeWithAttributes(&*label, Some(&attributes)) };
+    let pad = 4.0 * base_per_point;
+    let plate = NSRect::new(
+        NSPoint::new(at.x + side + 6.0 * base_per_point, at.y + (side - size.height) / 2.0 - pad / 2.0),
+        NSSize::new(size.width + 2.0 * pad, size.height + pad),
+    );
+    NSColor::colorWithWhite_alpha(0.1, 0.85).setFill();
+    NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(plate, pad, pad).fill();
+    let text_at = NSPoint::new(plate.origin.x + pad, plate.origin.y + pad / 2.0);
+    unsafe { objc2_app_kit::NSStringDrawing::drawAtPoint_withAttributes(&*label, text_at, Some(&attributes)) };
+}
+
 fn view(view: &NSView) -> Retained<NSView> {
     view.retain()
 }
@@ -1007,6 +1267,20 @@ define_class!(
                 self.redraw_overlay();
             } else if let Some(editor) = self.ivars().editor.load() {
                 editor.press(editor.to_base(self.point(event)), event.clickCount());
+            }
+        }
+
+        #[unsafe(method(mouseMoved:))]
+        fn mouse_moved(&self, event: &NSEvent) {
+            if let Some(editor) = self.ivars().editor.load() {
+                editor.hover(Some(editor.to_base(self.point(event))));
+            }
+        }
+
+        #[unsafe(method(mouseExited:))]
+        fn mouse_exited(&self, _event: &NSEvent) {
+            if let Some(editor) = self.ivars().editor.load() {
+                editor.hover(None);
             }
         }
 
@@ -1055,8 +1329,8 @@ define_class!(
                 keys::DELETE | keys::FORWARD_DELETE if editor.delete_selected() => {}
                 keys::C if plain => self.set_cropping(!self.ivars().cropping.get()),
                 _ if plain && PALETTE.iter().any(|(.., k)| *k == key) => {
-                    if let Some((tool, ..)) = PALETTE.iter().find(|(.., k)| *k == key) {
-                        editor.choose_tool(*tool);
+                    if let Some((pointer, ..)) = PALETTE.iter().find(|(.., k)| *k == key) {
+                        editor.choose(*pointer);
                     }
                 }
                 _ => unsafe { msg_send![super(self), keyDown: event] },
@@ -1207,7 +1481,7 @@ fn palette(mtm: MainThreadMarker, editor: &Editor, height: f64) -> (Retained<NSS
     let buttons: Vec<_> = PALETTE
         .iter()
         .enumerate()
-        .filter_map(|(index, (tool, tip, icon, _))| {
+        .filter_map(|(index, (pointer, tip, icon, _))| {
             let image = assets::icon(icon, 18.0)?;
             let button =
                 unsafe { NSButton::buttonWithImage_target_action(&image, Some(editor), Some(sel!(chooseTool:)), mtm) };
@@ -1215,7 +1489,7 @@ fn palette(mtm: MainThreadMarker, editor: &Editor, height: f64) -> (Retained<NSS
             button.setBezelStyle(NSBezelStyle::Toolbar);
             button.setTag(index as isize);
             button.setToolTip(Some(&NSString::from_str(tip)));
-            button.setState(if tool.is_none() { NSControlStateValueOn } else { NSControlStateValueOff });
+            button.setState(if *pointer == Pointer::Select { NSControlStateValueOn } else { NSControlStateValueOff });
             Some(button)
         })
         .collect();
@@ -1253,7 +1527,7 @@ pub fn open(mtm: MainThreadMarker, image: CFRetained<CGImage>, scale: f64, shot:
     let (width, height) = (CGImage::width(Some(&image)) as f64, CGImage::height(Some(&image)) as f64);
     let ivars = EditorIvars {
         rendered: RefCell::new(image.clone()),
-        bases: RefCell::new(vec![image]),
+        images: RefCell::new(vec![image]),
         scale,
         shot,
         history: RefCell::new(History::new(Doc {
@@ -1261,10 +1535,12 @@ pub fn open(mtm: MainThreadMarker, image: CFRetained<CGImage>, scale: f64, shot:
             annotations: Vec::new(),
             base: 0,
         })),
-        tool: Cell::new(None),
+        pointer: Cell::new(Pointer::Select),
         color: Cell::new(Color::RED),
         size: Cell::new(Size::Medium),
-        styles: Cell::new([0; 12]),
+        styles: Cell::new([0; Tool::ALL.len()]),
+        pick_format: Cell::new(0),
+        hover: Cell::new(None),
         selected: Cell::new(None),
         drag: RefCell::new(None),
         hidden: Cell::new(None),
@@ -1361,6 +1637,19 @@ pub fn open(mtm: MainThreadMarker, image: CFRetained<CGImage>, scale: f64, shot:
     let canvas: Retained<Canvas> = unsafe {
         msg_send![super(Canvas::alloc(mtm).set_ivars(canvas_ivars)), initWithFrame: NSRect::new(NSPoint::ZERO, natural)]
     };
+    let tracking = unsafe {
+        NSTrackingArea::initWithRect_options_owner_userInfo(
+            NSTrackingArea::alloc(),
+            NSRect::ZERO,
+            NSTrackingAreaOptions::MouseMoved
+                | NSTrackingAreaOptions::MouseEnteredAndExited
+                | NSTrackingAreaOptions::ActiveInKeyWindow
+                | NSTrackingAreaOptions::InVisibleRect,
+            Some(&canvas),
+            None,
+        )
+    };
+    canvas.addTrackingArea(&tracking);
     let sizable = NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable;
     let image_view = NSImageView::initWithFrame(NSImageView::alloc(mtm), NSRect::new(NSPoint::ZERO, natural));
     image_view.setImageScaling(NSImageScaling::ScaleAxesIndependently);
@@ -1399,6 +1688,23 @@ pub fn open(mtm: MainThreadMarker, image: CFRetained<CGImage>, scale: f64, shot:
     window.makeKeyAndOrderFront(None);
     editor.initial_zoom();
     EDITORS.with_borrow_mut(|editors| editors.push(editor));
+}
+
+/// Забирает отметку, что снимок области ждёт редактор. Вызывается из потока захвата.
+pub fn take_adding() -> bool {
+    ADDING.swap(false, Ordering::SeqCst)
+}
+
+/// Выделение отменили, следующий снимок идёт обычным путём.
+pub fn cancel_adding() {
+    ADDING.store(false, Ordering::SeqCst);
+}
+
+/// Кладёт снимок на холст редактора, который его ждал. Если редактор закрыли, снимок пропадает.
+pub fn place_capture(image: CFRetained<CGImage>, scale: f64) {
+    if let Some(editor) = ADD_TARGET.take().and_then(|weak| weak.load()) {
+        editor.place(image, scale);
+    }
 }
 
 /// Открывает в редакторе последний снимок. Если снимков ещё не было, только сигналит.

@@ -24,7 +24,8 @@ use objc2_foundation::{
 };
 use objc2_image_io::{
     CGImageDestination, CGImageSource, kCGImageDestinationLossyCompressionQuality, kCGImagePropertyDPIHeight,
-    kCGImagePropertyDPIWidth,
+    kCGImagePropertyDPIWidth, kCGImagePropertyGIFDelayTime, kCGImagePropertyGIFDictionary,
+    kCGImagePropertyGIFLoopCount,
 };
 
 use crate::capture::Shot;
@@ -44,6 +45,11 @@ unsafe extern "C" {
 
 /// Отдаёт снимок в буфер обмена и в файл согласно настройкам, затем показывает превью или подтверждение.
 pub fn deliver(image: &CGImage, scale: f64, shot: &Shot) {
+    // Снимок для вставки в редактор не копируется, не сохраняется и не становится последним.
+    if editor::take_adding() {
+        let image = retain(image);
+        return DispatchQueue::main().exec_async(move || editor::place_capture(image, scale));
+    }
     let settings = Settings::load();
     let png = if settings.copy_to_clipboard { copy(image, scale) } else { None };
     let saved = if settings.save_to_file {
@@ -177,6 +183,27 @@ fn encode(image: &CGImage, format: Format, scale: f64) -> Option<Vec<u8>> {
         unsafe { [kCGImagePropertyDPIWidth, kCGImagePropertyDPIHeight, kCGImageDestinationLossyCompressionQuality] };
     let properties = CFDictionary::<CFString, CFNumber>::from_slices(&keys, &[&dpi, &dpi, &quality]);
     unsafe { destination.add_image(image, Some(properties.as_ref())) };
+    unsafe { destination.finalize() }.then(|| data.to_vec())
+}
+
+/// Анимированный GIF из кадров, которые сменяют друг друга по кругу через `seconds`.
+pub fn encode_gif(frames: &[&CGImage], seconds: f64) -> Option<Vec<u8>> {
+    let data = CFMutableData::new(None, 0)?;
+    let gif = CFString::from_static_str("com.compuserve.gif");
+    let destination = unsafe { CGImageDestination::with_data(&data, &gif, frames.len(), None) }?;
+    // SAFETY: ключи - константы ImageIO, они живут весь процесс.
+    let (dictionary, loop_count, delay) =
+        unsafe { (kCGImagePropertyGIFDictionary, kCGImagePropertyGIFLoopCount, kCGImagePropertyGIFDelayTime) };
+    let gif_properties = |key: &CFString, value: &CFNumber| {
+        let inner = CFDictionary::<CFString, CFNumber>::from_slices(&[key], &[value]);
+        CFDictionary::<CFString, CFDictionary<CFString, CFNumber>>::from_slices(&[dictionary], &[&inner])
+    };
+    // 0 повторов означает бесконечный круг.
+    unsafe { destination.set_properties(Some(gif_properties(loop_count, &CFNumber::new_i32(0)).as_ref())) };
+    let frame = gif_properties(delay, &CFNumber::new_f64(seconds));
+    for image in frames {
+        unsafe { destination.add_image(image, Some(frame.as_ref())) };
+    }
     unsafe { destination.finalize() }.then(|| data.to_vec())
 }
 
@@ -338,6 +365,41 @@ mod tests {
         // пустое приложение даёт пустое имя
         assert_eq!(file_name("{app}", "d", "t", "Window", ""), "Kadro d at t");
         assert_eq!(file_name(".hidden", "d", "t", "Window", ""), "Kadro d at t");
+    }
+
+    #[test]
+    fn gif_has_both_frames_and_loops_forever() {
+        let space = CGColorSpace::new_device_rgb();
+        let frame = |gray: f64| {
+            // SAFETY: буфер null - Core Graphics выделит его сам.
+            let context = unsafe {
+                CGBitmapContextCreate(
+                    std::ptr::null_mut(),
+                    6,
+                    4,
+                    8,
+                    0,
+                    space.as_deref(),
+                    CGImageAlphaInfo::PremultipliedLast.0,
+                )
+            }
+            .unwrap();
+            CGContext::set_rgb_fill_color(Some(&context), gray, gray, gray, 1.0);
+            CGContext::fill_rect(Some(&context), CGRect::new(CGPoint::ZERO, CGSize::new(6.0, 4.0)));
+            CGBitmapContextCreateImage(Some(&context)).unwrap()
+        };
+        let (dark, light) = (frame(0.1), frame(0.9));
+        let gif = encode_gif(&[&dark, &light], 1.0).unwrap();
+        // ImageIO пишет заголовок GIF87a, но расширения повтора и задержки на месте
+        assert_eq!(&gif[..3], b"GIF");
+        let source = unsafe { CGImageSource::with_data(&CFData::from_bytes(&gif), None) }.unwrap();
+        assert_eq!(unsafe { source.count() }, 2);
+        // NETSCAPE2.0 с нулём повторов - бесконечный круг, как его понимают Safari и Preview
+        let netscape = gif.windows(11).position(|w| w == b"NETSCAPE2.0").expect("loop extension");
+        assert_eq!(&gif[netscape + 13..netscape + 15], &[0, 0]);
+        // у каждого кадра задержка 100 сотых секунды
+        let delays = gif.windows(6).filter(|w| w[..3] == [0x21, 0xf9, 0x04] && w[4..] == [100, 0]).count();
+        assert_eq!(delays, 2);
     }
 
     #[test]

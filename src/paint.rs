@@ -22,7 +22,8 @@ use objc2_core_image::{CIContext, CIImage};
 use objc2_foundation::{NSDictionary, NSPoint, NSRect, NSSize, NSString};
 
 use crate::annotation::{Annotation, Color, Point, Tool, counter_number};
-use crate::document::PixelRect;
+use crate::document::Doc;
+use crate::{measure, output};
 
 thread_local! {
     // Контекст Core Image дорого создавать, один на поток переиспользуется.
@@ -39,16 +40,11 @@ pub enum Mode {
     Live,
 }
 
-/// Рисует аннотации в контекст размера `crop`. Координаты аннотаций - в пикселях основы.
+/// Рисует аннотации документа в контекст размера его обрезки. Координаты аннотаций - в пикселях основы.
 /// Аннотация `hidden` пропускается, но номера счётчиков считаются по всему списку.
-pub fn draw(
-    context: &CGContext,
-    base: &CGImage,
-    crop: PixelRect,
-    annotations: &[Annotation],
-    hidden: Option<usize>,
-    scale: f64,
-) {
+/// `images` - картинки редактора: основы и добавленные снимки.
+pub fn draw(context: &CGContext, images: &[CFRetained<CGImage>], doc: &Doc, hidden: Option<usize>, scale: f64) {
+    let (crop, annotations, base) = (doc.state.crop, &doc.annotations, &*images[doc.base]);
     CGContext::save_g_state(Some(context));
     // У Core Graphics начало внизу слева, у аннотаций - вверху слева в координатах всей основы.
     CGContext::translate_ctm(Some(context), 0.0, crop.height);
@@ -59,18 +55,36 @@ pub fn draw(
     NSGraphicsContext::setCurrentContext(Some(&ns));
 
     let visible = NSRect::new(NSPoint::new(crop.x, crop.y), NSSize::new(crop.width, crop.height));
-    // Размытие и пикселизация ложатся на снимок, прожектор гасит его вместе с ними,
+    // Добавленные снимки ложатся на основу, размытие и пикселизация - на них, прожектор гасит всё это,
     // а фигуры и текст остаются яркими поверх в порядке рисования.
     let redacts = |a: &Annotation| matches!(a.tool, Tool::Blur | Tool::Pixelate);
+    let under = |a: &Annotation| redacts(a) || matches!(a.tool, Tool::Image | Tool::Spotlight);
     let shown = || annotations.iter().enumerate().filter(|(i, _)| Some(*i) != hidden);
-    for (index, annotation) in shown().filter(|(_, a)| redacts(a)) {
-        draw_one(annotation, number(annotations, index), Some(base), scale, Mode::Final);
+    for (_, annotation) in shown().filter(|(_, a)| a.tool == Tool::Image) {
+        draw_one(annotation, 0, Some(base), images, scale, Mode::Final);
+    }
+    if shown().any(|(_, a)| redacts(a)) {
+        // Без добавленных снимков под размытием только основа, и копировать нарисованное незачем.
+        let below = if shown().any(|(_, a)| a.tool == Tool::Image) {
+            CGBitmapContextCreateImage(Some(context)).map(|image| (image, Point::new(crop.x, crop.y)))
+        } else {
+            Some((output::retain(base), Point::new(0.0, 0.0)))
+        };
+        if let Some((source, origin)) = below {
+            for (_, annotation) in shown().filter(|(_, a)| redacts(a)) {
+                if annotation.tool == Tool::Blur {
+                    blur(&source, origin, annotation, scale);
+                } else {
+                    pixelate(&source, origin, annotation, scale);
+                }
+            }
+        }
     }
     // Все прожекторы гасят фон одним слоем, иначе каждый следующий затемнял бы окна предыдущих.
     if shown().any(|(_, a)| a.tool == Tool::Spotlight) {
         spotlight(visible, annotations, hidden);
     }
-    for (index, annotation) in shown().filter(|(_, a)| !redacts(a) && a.tool != Tool::Spotlight) {
+    for (index, annotation) in shown().filter(|(_, a)| !under(a)) {
         if annotation.tool == Tool::Magnifier {
             // Лупа увеличивает уже нарисованное под ней, иначе она показала бы то, что скрыто размытием.
             if let Some(below) = CGBitmapContextCreateImage(Some(context)) {
@@ -78,7 +92,7 @@ pub fn draw(
             }
             continue;
         }
-        draw_one(annotation, number(annotations, index), Some(base), scale, Mode::Final);
+        draw_one(annotation, number(annotations, index), Some(base), images, scale, Mode::Final);
     }
 
     NSGraphicsContext::restoreGraphicsState_class();
@@ -87,11 +101,19 @@ pub fn draw(
 
 /// Рисует одну аннотацию в текущий контекст AppKit с началом вверху слева.
 /// Без `base` эффекты, которым нужны пиксели снимка, рисуются как в `Mode::Live`.
-pub fn draw_one(annotation: &Annotation, number: usize, base: Option<&CGImage>, scale: f64, mode: Mode) {
+pub fn draw_one(
+    annotation: &Annotation,
+    number: usize,
+    base: Option<&CGImage>,
+    images: &[CFRetained<CGImage>],
+    scale: f64,
+    mode: Mode,
+) {
     let color = ns_color(annotation.color);
     let width = annotation.size.stroke() * scale;
     let p = &annotation.points;
     let live = mode == Mode::Live || base.is_none();
+    let origin = Point::new(0.0, 0.0);
     match annotation.tool {
         Tool::Arrow => arrow(p[0], p[1], width, annotation.style, &color),
         Tool::Line => {
@@ -130,20 +152,26 @@ pub fn draw_one(annotation: &Annotation, number: usize, base: Option<&CGImage>, 
         Tool::Highlighter => stroke_points(p, width * 4.0, &color.colorWithAlphaComponent(0.35)),
         Tool::Text => text(annotation, scale, &color),
         Tool::Counter => counter(annotation, number, scale, &color),
+        Tool::Ruler => ruler(annotation, scale, &color),
+        Tool::Image => {
+            if let Some(image) = images.get(annotation.image) {
+                draw_image(image, ns_rect(annotation));
+            }
+        }
         Tool::Blur | Tool::Pixelate | Tool::Magnifier if live => dashed_outline(annotation, scale),
         Tool::Blur => {
             if let Some(base) = base {
-                blur(base, annotation, scale);
+                blur(base, origin, annotation, scale);
             }
         }
         Tool::Pixelate => {
             if let Some(base) = base {
-                pixelate(base, annotation, scale);
+                pixelate(base, origin, annotation, scale);
             }
         }
         Tool::Magnifier => {
             if let Some(base) = base {
-                magnifier(base, Point::new(0.0, 0.0), annotation, scale);
+                magnifier(base, origin, annotation, scale);
             }
         }
         Tool::Spotlight => dashed_outline(annotation, scale),
@@ -306,6 +334,46 @@ fn counter(annotation: &Annotation, number: usize, scale: f64, color: &NSColor) 
     unsafe { label.drawAtPoint_withAttributes(at, Some(&attributes)) };
 }
 
+/// Отрезок с засечками на концах и длиной посередине.
+fn ruler(annotation: &Annotation, scale: f64, color: &NSColor) {
+    let (from, to) = (annotation.points[0], annotation.points[1]);
+    let length = (to.x - from.x).hypot(to.y - from.y);
+    let width = (annotation.size.stroke() * scale / 2.0).max(1.0);
+    let tick = width * 3.0 + 4.0 * scale;
+    // Единичная нормаль к отрезку в сторону верха или левого края.
+    let (nx, ny) = if length > 0.0 { ((to.y - from.y) / length, -(to.x - from.x) / length) } else { (0.0, -1.0) };
+    let (nx, ny) = if ny > 0.0 || (ny == 0.0 && nx > 0.0) { (-nx, -ny) } else { (nx, ny) };
+    color.setStroke();
+    segment(from, to, width).stroke();
+    if length > 0.0 {
+        for end in [from, to] {
+            let (dx, dy) = (nx * tick, ny * tick);
+            segment(Point::new(end.x - dx, end.y - dy), Point::new(end.x + dx, end.y + dy), width).stroke();
+        }
+    }
+    let font = NSFont::boldSystemFontOfSize(annotation.size.text() * scale * 0.7);
+    let white = NSColor::whiteColor();
+    // SAFETY: ключи - системные константы атрибутов текста, они живут весь процесс.
+    let keys = unsafe { [NSFontAttributeName, NSForegroundColorAttributeName] };
+    let attributes =
+        NSDictionary::<NSString, AnyObject>::from_slices(&keys, &[&*font as &AnyObject, &*white as &AnyObject]);
+    let label = NSString::from_str(&measure::ruler_label(length, scale, annotation.style));
+    let size = unsafe { label.sizeWithAttributes(Some(&attributes)) };
+    let padding = size.height * 0.25;
+    let (plate_width, plate_height) = (size.width + 2.0 * padding, size.height + padding);
+    // Подпись стоит рядом с серединой, а не на ней, чтобы две линейки из одного щелчка не закрывали друг друга.
+    let away = tick + nx.abs() * plate_width / 2.0 + ny.abs() * plate_height / 2.0;
+    let center = Point::new((from.x + to.x) / 2.0 + nx * away, (from.y + to.y) / 2.0 + ny * away);
+    let plate = NSRect::new(
+        NSPoint::new(center.x - plate_width / 2.0, center.y - plate_height / 2.0),
+        NSSize::new(plate_width, plate_height),
+    );
+    color.setFill();
+    NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(plate, padding * 2.0, padding * 2.0).fill();
+    let at = NSPoint::new(center.x - size.width / 2.0, center.y - size.height / 2.0);
+    unsafe { label.drawAtPoint_withAttributes(at, Some(&attributes)) };
+}
+
 /// Затемняет видимую область, оставляя окна в местах прожекторов.
 fn spotlight(visible: NSRect, annotations: &[Annotation], hidden: Option<usize>) {
     let path = NSBezierPath::bezierPathWithRect(visible);
@@ -376,8 +444,9 @@ fn region(image: &CGImage, origin: Point, rect: NSRect) -> Option<(CFRetained<CG
     Some((pixels, NSRect::new(NSPoint::new(left + origin.x, top + origin.y), size)))
 }
 
-fn blur(base: &CGImage, annotation: &Annotation, scale: f64) {
-    let Some((pixels, rect)) = region(base, Point::new(0.0, 0.0), ns_rect(annotation)) else { return };
+/// `source` - картинка под размытием, её левый верхний угол в точке `origin` пикселей основы.
+fn blur(source: &CGImage, origin: Point, annotation: &Annotation, scale: f64) {
+    let Some((pixels, rect)) = region(source, origin, ns_rect(annotation)) else { return };
     let sigma = strength(annotation.style) * scale;
     let blurred = CI_CONTEXT.with(|cell| {
         let context = cell.get_or_init(|| unsafe { CIContext::contextWithOptions(None) });
@@ -392,8 +461,8 @@ fn blur(base: &CGImage, annotation: &Annotation, scale: f64) {
 }
 
 /// Уменьшает область до клеток и растягивает обратно без сглаживания.
-fn pixelate(base: &CGImage, annotation: &Annotation, scale: f64) {
-    let Some((pixels, rect)) = region(base, Point::new(0.0, 0.0), ns_rect(annotation)) else { return };
+fn pixelate(source: &CGImage, origin: Point, annotation: &Annotation, scale: f64) {
+    let Some((pixels, rect)) = region(source, origin, ns_rect(annotation)) else { return };
     let cell = (strength(annotation.style) * scale).max(1.0);
     let (columns, rows) =
         ((rect.size.width / cell).ceil().max(1.0) as usize, (rect.size.height / cell).ceil().max(1.0) as usize);

@@ -59,6 +59,10 @@ pub const PIXELATE: &[u8] = include_bytes!("../assets/icons/grid-3x3.svg");
 pub const SPOTLIGHT: &[u8] = include_bytes!("../assets/icons/flashlight.svg");
 pub const MAGNIFIER: &[u8] = include_bytes!("../assets/icons/search.svg");
 pub const LAYERS: &[u8] = include_bytes!("../assets/icons/layers.svg");
+pub const RULER: &[u8] = include_bytes!("../assets/icons/ruler.svg");
+pub const PIPETTE: &[u8] = include_bytes!("../assets/icons/pipette.svg");
+pub const IMAGE_PLUS: &[u8] = include_bytes!("../assets/icons/image-plus.svg");
+pub const FILM: &[u8] = include_bytes!("../assets/icons/film.svg");
 
 thread_local! {
     static FONT: OnceCell<Option<Retained<NSFontDescriptor>>> = const { OnceCell::new() };

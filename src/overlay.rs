@@ -22,7 +22,7 @@ use objc2_core_graphics::{
 use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSObject, NSPoint, NSRect, NSSize, NSString, ns_string};
 
 use crate::bridge::{self, number};
-use crate::{assets, capture, geometry, keys};
+use crate::{assets, capture, editor, geometry, keys};
 
 /// Сторона лупы в точках и сколько пикселей снимка в ней видно по каждой оси.
 const LOUPE_SIZE: f64 = 120.0;
@@ -202,7 +202,10 @@ define_class!(
         fn key_down(&self, event: &NSEvent) {
             let step = if event.modifierFlags().contains(NSEventModifierFlags::Shift) { 10.0 } else { 1.0 };
             let delta = match event.keyCode() {
-                keys::ESCAPE => return close(),
+                keys::ESCAPE => {
+                    editor::cancel_adding();
+                    return close();
+                }
                 keys::LEFT => NSPoint::new(-step, 0.0),
                 keys::RIGHT => NSPoint::new(step, 0.0),
                 keys::DOWN => NSPoint::new(0.0, -step),
@@ -388,9 +391,10 @@ fn to_display_local(global: CGRect, display: CGRect) -> NSRect {
 }
 
 /// Показывает оверлей на всех экранах: выделение области или выбор окна.
-pub fn select(mtm: MainThreadMarker, mode: Mode) {
+/// false - оверлей не показан: нет доступа или он уже открыт.
+pub fn select(mtm: MainThreadMarker, mode: Mode) -> bool {
     if !capture::has_access(mtm) || WINDOWS.with_borrow(|w| !w.is_empty()) {
-        return;
+        return false;
     }
     MODE.set(mode);
     APP.set(capture::frontmost_app_name());
@@ -419,6 +423,7 @@ pub fn select(mtm: MainThreadMarker, mode: Mode) {
         NSCursor::crosshairCursor().push();
         track_pointer();
     }
+    true
 }
 
 /// Отдаёт позицию мыши виду того экрана, где она сейчас, остальным - пустую.

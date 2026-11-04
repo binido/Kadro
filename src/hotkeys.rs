@@ -212,11 +212,15 @@ impl Action {
 
     pub fn run(self, mtm: MainThreadMarker) {
         match self {
-            Action::Region => overlay::select(mtm, overlay::Mode::Region),
+            Action::Region => {
+                overlay::select(mtm, overlay::Mode::Region);
+            }
             Action::RepeatRegion => capture::repeat_area(mtm),
             Action::Screen => capture::capture_screen(mtm),
             Action::DelayedScreen => capture::capture_delayed(mtm),
-            Action::Window => overlay::select(mtm, overlay::Mode::Window),
+            Action::Window => {
+                overlay::select(mtm, overlay::Mode::Window);
+            }
             Action::ActiveWindow => capture::capture_active_window(mtm),
             Action::PinLast => pin::pin_last(mtm),
             Action::EditLast => editor::open_last(mtm),
