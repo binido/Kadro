@@ -53,7 +53,7 @@ fn strip(image: &CGImage, x: usize, y: usize, width: usize, height: usize) -> Op
     let bounds = CGRect::new(CGPoint::ZERO, CGSize::new(width as f64, height as f64));
     CGContext::draw_image(Some(&context), bounds, Some(&part));
     drop(context);
-    Some(bytes.chunks_exact(4).map(|p| [p[0], p[1], p[2]]).collect())
+    Some(bytes.as_chunks::<4>().0.iter().map(|&[red, green, blue, _]| [red, green, blue]).collect())
 }
 
 /// Цвет текстом для буфера обмена: `#RRGGBB`, `rgb(r, g, b)` или `hsl(h, s%, l%)`.
