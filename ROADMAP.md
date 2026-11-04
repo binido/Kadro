@@ -38,7 +38,7 @@ A version is done when all of these hold:
 | 0.2 | Capture modes and precision | Done |
 | 0.3 | After-capture preview | Done |
 | 0.4 | Pinned screenshots | Done |
-| 0.5 | Editor foundation | Planned |
+| 0.5 | Editor foundation | Done |
 | 0.6 | Annotation tools | Planned |
 | 0.7 | Measuring and composing | Planned |
 | 0.8 | Backgrounds and window frames | Planned |
@@ -128,7 +128,7 @@ Technical notes:
 
 Done when: pins survive switching Spaces and full-screen apps, and memory returns to the idle budget after all pins close.
 
-## 0.5 — Editor foundation
+## 0.5 — Editor foundation (shipped)
 
 **Goal:** a native editor window that every later editing feature plugs into.
 

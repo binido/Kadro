@@ -19,7 +19,8 @@ use objc2_service_management::{SMAppService, SMAppServiceStatus};
 
 use crate::hotkeys::{self, Action, Shortcut};
 use crate::settings::{
-    self, Choice, Confirmation, Cursor, DEFAULT_FILE_NAME_TEMPLATE, Format, PreviewHiding, Settings,
+    self, AfterCapture, Choice, Confirmation, Cursor, DEFAULT_FILE_NAME_TEMPLATE, DefaultZoom, EscAction, Format,
+    PreviewHiding, Settings,
 };
 use crate::{assets, keys};
 
@@ -36,7 +37,8 @@ thread_local! {
 
 #[derive(Default)]
 struct ControllerIvars {
-    preview: OnceCell<Retained<NSButton>>,
+    /// Радиокнопка "Nothing" в выборе, что показать после снимка.
+    show_nothing: OnceCell<Retained<NSButton>>,
     copy: OnceCell<Retained<NSButton>>,
     save: OnceCell<Retained<NSButton>>,
     directory: OnceCell<Retained<NSButton>>,
@@ -65,11 +67,36 @@ define_class!(
     impl Controller {
         #[unsafe(method(toggleDestination:))]
         fn toggle_destination(&self, _sender: &NSButton) {
-            let [preview, copy, save] = self.destinations();
-            settings::set_flag(settings::SHOW_PREVIEW, is_on(preview));
+            let [copy, save] = self.destinations();
             settings::set_flag(settings::COPY_TO_CLIPBOARD, is_on(copy));
             settings::set_flag(settings::SAVE_TO_FILE, is_on(save));
             self.update_destinations();
+        }
+
+        #[unsafe(method(changeAfterCapture:))]
+        fn change_after_capture(&self, sender: &NSButton) {
+            store_choice::<AfterCapture>(sender);
+            self.update_destinations();
+        }
+
+        #[unsafe(method(changeEscAction:))]
+        fn change_esc_action(&self, sender: &NSButton) {
+            store_choice::<EscAction>(sender);
+        }
+
+        #[unsafe(method(changeDefaultZoom:))]
+        fn change_default_zoom(&self, sender: &NSButton) {
+            store_choice::<DefaultZoom>(sender);
+        }
+
+        #[unsafe(method(toggleEditorOnTop:))]
+        fn toggle_editor_on_top(&self, sender: &NSButton) {
+            settings::set_flag(settings::EDITOR_ON_TOP, is_on(sender));
+        }
+
+        #[unsafe(method(toggleScrollZoom:))]
+        fn toggle_scroll_zoom(&self, sender: &NSButton) {
+            settings::set_flag(settings::EDITOR_SCROLL_ZOOM, is_on(sender));
         }
 
         #[unsafe(method(changePreviewHiding:))]
@@ -148,17 +175,22 @@ impl Controller {
         unsafe { msg_send![super(this), init] }
     }
 
-    fn destinations(&self) -> [&NSButton; 3] {
+    fn destinations(&self) -> [&NSButton; 2] {
         let ivars = self.ivars();
-        [&ivars.preview, &ivars.copy, &ivars.save].map(|cell| &**cell.get().expect("built with the window"))
+        [&ivars.copy, &ivars.save].map(|cell| &**cell.get().expect("built with the window"))
     }
 
-    /// Последнее включённое действие после снимка нельзя выключить, иначе снимок пропадёт.
+    /// Снимок должен куда-то попасть: в превью, редактор, буфер или файл.
+    /// Поэтому последнее включённое из них выключить нельзя.
     fn update_destinations(&self) {
         let buttons = self.destinations();
+        let shows = Settings::load().after_capture != AfterCapture::Nothing;
         let on = buttons.iter().filter(|b| is_on(b)).count();
         for button in buttons {
-            button.setEnabled(!(is_on(button) && on == 1));
+            button.setEnabled(shows || !(is_on(button) && on == 1));
+        }
+        if let Some(nothing) = self.ivars().show_nothing.get() {
+            nothing.setEnabled(on > 0);
         }
     }
 }
@@ -306,6 +338,7 @@ fn build_window(mtm: MainThreadMarker) -> Retained<NSWindow> {
     tabs.setTabStyle(NSTabViewControllerTabStyle::Toolbar);
     for (title, icon, view) in [
         ("General", assets::SLIDERS, general_tab(mtm, &controller)),
+        ("Editor", assets::SQUARE_PEN, editor_tab(mtm, &controller)),
         ("Shortcuts", assets::KEYBOARD, shortcuts_tab(mtm, &controller)),
     ] {
         let page = NSViewController::new(mtm);
@@ -364,10 +397,12 @@ fn general_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSVie
     let tokens = label(mtm, "{date} {time} {mode} {app}");
     tokens.setTextColor(Some(&NSColor::secondaryLabelColor()));
 
-    let preview = checkbox(mtm, "Preview", current.show_preview, controller, sel!(toggleDestination:));
+    let after_capture = radios(mtm, current.after_capture, controller, sel!(changeAfterCapture:));
+    if let Some(nothing) = after_capture.last().and_then(|v| v.clone().downcast::<NSButton>().ok()) {
+        let _ = controller.ivars().show_nothing.set(nothing);
+    }
     let copy = checkbox(mtm, "Copy", current.copy_to_clipboard, controller, sel!(toggleDestination:));
     let save = checkbox(mtm, "Save", current.save_to_file, controller, sel!(toggleDestination:));
-    let _ = controller.ivars().preview.set(preview.clone());
     let hiding = radios(mtm, current.preview_hiding, controller, sel!(changePreviewHiding:));
     let confirmation = radios(mtm, current.confirmation, controller, sel!(changeConfirmation:));
     let _ = controller.ivars().copy.set(copy.clone());
@@ -391,9 +426,38 @@ fn general_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSVie
             Row::Separator,
             Row::Field("Autostart", view(&login)),
             Row::Separator,
-            Row::Field("After screenshot", inline(mtm, &[view(&preview), view(&copy), view(&save)])),
+            Row::Field("Show after capture", inline(mtm, &after_capture)),
+            Row::Field("After screenshot", inline(mtm, &[view(&copy), view(&save)])),
             Row::Field("Hide preview", inline(mtm, &hiding)),
             Row::Field("Confirm without preview", inline(mtm, &confirmation)),
+        ],
+        Columns::Fitted,
+    )
+}
+
+fn editor_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView> {
+    let current = Settings::load();
+    let esc = radios(mtm, current.esc_action, controller, sel!(changeEscAction:));
+    let zoom = radios(mtm, current.default_zoom, controller, sel!(changeDefaultZoom:));
+    let on_top = checkbox(
+        mtm,
+        "Keep the editor above other windows",
+        current.editor_on_top,
+        controller,
+        sel!(toggleEditorOnTop:),
+    );
+    let scroll = checkbox(mtm, "Zoom with the scroll wheel", current.scroll_zoom, controller, sel!(toggleScrollZoom:));
+    let scroll_hint = label(mtm, "Otherwise hold ⌘ while scrolling, or pinch.");
+    scroll_hint.setTextColor(Some(&NSColor::secondaryLabelColor()));
+    grid(
+        mtm,
+        &[
+            Row::Field("Esc in the editor", inline(mtm, &esc)),
+            Row::Field("Open screenshots", inline(mtm, &zoom)),
+            Row::Separator,
+            Row::Field("Window", view(&on_top)),
+            Row::Field("Zoom", view(&scroll)),
+            Row::Field("", view(&scroll_hint)),
         ],
         Columns::Fitted,
     )

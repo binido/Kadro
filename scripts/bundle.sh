@@ -33,6 +33,22 @@ cat > "$app/Contents/Info.plist" <<EOF
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key><string>Image</string>
+            <key>CFBundleTypeRole</key><string>Editor</string>
+            <!-- Alternate: Kadro появляется в "Открыть с помощью", но не перехватывает картинки у Просмотра. -->
+            <key>LSHandlerRank</key><string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.png</string>
+                <string>public.jpeg</string>
+                <string>public.heic</string>
+                <string>com.compuserve.gif</string>
+            </array>
+        </dict>
+    </array>
 </dict>
 </plist>
 EOF

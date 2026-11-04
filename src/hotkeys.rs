@@ -13,7 +13,7 @@ use objc2_core_foundation::{CFArray, CFRetained};
 use objc2_foundation::{NSArray, NSDictionary, NSString, NSUserDefaults, ns_string};
 
 use crate::bridge::{self, number};
-use crate::{capture, overlay, pin};
+use crate::{capture, editor, overlay, pin};
 
 type OSStatus = i32;
 
@@ -181,11 +181,12 @@ pub enum Action {
     Window,
     ActiveWindow,
     PinLast,
+    EditLast,
 }
 
 impl Action {
     /// Порядок пунктов в меню и строк в настройках.
-    pub const ALL: [Action; 7] = [
+    pub const ALL: [Action; 8] = [
         Action::Region,
         Action::RepeatRegion,
         Action::Screen,
@@ -193,6 +194,7 @@ impl Action {
         Action::Window,
         Action::ActiveWindow,
         Action::PinLast,
+        Action::EditLast,
     ];
 
     pub fn title(self) -> &'static str {
@@ -204,6 +206,7 @@ impl Action {
             Action::Window => "Capture Window",
             Action::ActiveWindow => "Capture Active Window",
             Action::PinLast => "Pin Last Screenshot",
+            Action::EditLast => "Edit Last Screenshot",
         }
     }
 
@@ -216,6 +219,7 @@ impl Action {
             Action::Window => overlay::select(mtm, overlay::Mode::Window),
             Action::ActiveWindow => capture::capture_active_window(mtm),
             Action::PinLast => pin::pin_last(mtm),
+            Action::EditLast => editor::open_last(mtm),
         }
     }
 
@@ -233,6 +237,7 @@ impl Action {
             Action::Window => "shortcutWindow",
             Action::ActiveWindow => "shortcutActiveWindow",
             Action::PinLast => "shortcutPinLast",
+            Action::EditLast => "shortcutEditLast",
         }
     }
 
@@ -242,7 +247,13 @@ impl Action {
             Action::Screen => 18,
             Action::Region => 19,
             Action::Window => 20,
-            Action::RepeatRegion | Action::DelayedScreen | Action::ActiveWindow | Action::PinLast => return None,
+            Action::RepeatRegion
+            | Action::DelayedScreen
+            | Action::ActiveWindow
+            | Action::PinLast
+            | Action::EditLast => {
+                return None;
+            }
         };
         Some(Shortcut { key_code, modifiers: CONTROL | SHIFT })
     }

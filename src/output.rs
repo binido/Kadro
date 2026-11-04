@@ -10,22 +10,26 @@ use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2_app_kit::{NSPasteboard, NSPasteboardTypePNG};
-use objc2_core_foundation::{CFDictionary, CFMutableData, CFNumber, CFRetained, CFString, CGPoint, CGRect, CGSize};
+use objc2_core_foundation::{
+    CFData, CFDictionary, CFMutableData, CFNumber, CFRetained, CFString, CGPoint, CGRect, CGSize,
+};
 use objc2_core_graphics::CGColorSpace;
 use objc2_core_graphics::{
     CGBitmapContextCreate, CGBitmapContextCreateImage, CGContext, CGImage, CGImageAlphaInfo, CGImageByteOrderInfo,
     CGInterpolationQuality,
 };
 use objc2_foundation::{
-    NSArray, NSData, NSDate, NSDateFormatter, NSNumber, NSPropertyListFormat, NSPropertyListSerialization, NSString,
+    NSArray, NSData, NSDate, NSDateFormatter, NSDictionary, NSNumber, NSPropertyListFormat,
+    NSPropertyListSerialization, NSString,
 };
 use objc2_image_io::{
-    CGImageDestination, kCGImageDestinationLossyCompressionQuality, kCGImagePropertyDPIHeight, kCGImagePropertyDPIWidth,
+    CGImageDestination, CGImageSource, kCGImageDestinationLossyCompressionQuality, kCGImagePropertyDPIHeight,
+    kCGImagePropertyDPIWidth,
 };
 
 use crate::capture::Shot;
-use crate::settings::{DEFAULT_FILE_NAME_TEMPLATE, Format, Settings};
-use crate::{pin, preview};
+use crate::settings::{AfterCapture, DEFAULT_FILE_NAME_TEMPLATE, Format, Settings};
+use crate::{bridge, editor, pin, preview};
 
 unsafe extern "C" {
     fn setxattr(
@@ -43,7 +47,7 @@ pub fn deliver(image: &CGImage, scale: f64, shot: &Shot) {
     let settings = Settings::load();
     let png = if settings.copy_to_clipboard { copy(image, scale) } else { None };
     let saved = if settings.save_to_file {
-        save(&settings.directory, image, scale, shot, png.as_deref())
+        save(&settings.directory, image, scale, Some(shot), png.as_deref())
             .inspect_err(|err| eprintln!("kadro: failed to save screenshot: {err}"))
             .ok()
     } else {
@@ -55,14 +59,14 @@ pub fn deliver(image: &CGImage, scale: f64, shot: &Shot) {
     let copied = png.is_some();
     let image = retain(image);
     let shot = shot.clone();
-    let show_preview = settings.show_preview;
+    let after_capture = settings.after_capture;
     DispatchQueue::main().exec_async(move || {
         let Some(mtm) = MainThreadMarker::new() else { return };
         pin::remember_place(shot.clone());
-        if show_preview {
-            preview::show(mtm, image, scale, shot, copied || saved.is_some());
-        } else {
-            preview::confirm(mtm, copied, saved.as_deref(), &shot);
+        match after_capture {
+            AfterCapture::Preview => preview::show(mtm, image, scale, shot, copied || saved.is_some()),
+            AfterCapture::Editor => editor::open(mtm, image, scale, Some(shot), "Screenshot"),
+            AfterCapture::Nothing => preview::confirm(mtm, copied, saved.as_deref(), &shot),
         }
     });
 }
@@ -92,11 +96,12 @@ pub fn copy(image: &CGImage, scale: f64) -> Option<Vec<u8>> {
 }
 
 /// Сохраняет снимок в папку по настройкам формата, уменьшения и шаблона имени.
+/// Без `shot` - картинка открыта из файла или буфера, а не снята, и метки снимка экрана ей не ставятся.
 pub fn save(
     directory: &Path,
     image: &CGImage,
     scale: f64,
-    shot: &Shot,
+    shot: Option<&Shot>,
     png: Option<&[u8]>,
 ) -> std::io::Result<PathBuf> {
     let settings = Settings::load();
@@ -115,11 +120,41 @@ pub fn save(
     let bytes = bytes.ok_or_else(|| std::io::Error::other(format!("{} encoding failed", format.extension())))?;
     std::fs::create_dir_all(directory)?;
     let (date, time) = (now("yyyy-MM-dd"), now("HH.mm.ss"));
-    let name = file_name(&settings.file_name_template, &date, &time, shot);
+    let (mode, app) = shot.map_or(("Image", ""), |shot| (shot.kind.title(), shot.app.as_str()));
+    let name = file_name(&settings.file_name_template, &date, &time, mode, app);
     let path = unique_path(directory, &name, format.extension());
     std::fs::write(&path, bytes)?;
-    mark_as_screenshot(&path, shot);
+    if let Some(shot) = shot {
+        mark_as_screenshot(&path, shot);
+    }
     Ok(path)
+}
+
+/// Записывает картинку в выбранный путь. Формат берётся из расширения, незнакомое расширение - ошибка.
+pub fn write_to(path: &Path, image: &CGImage, scale: f64) -> std::io::Result<()> {
+    let extension = path.extension().and_then(|e| e.to_str()).unwrap_or_default().to_lowercase();
+    let format = match extension.as_str() {
+        "png" => Format::Png,
+        "jpg" | "jpeg" => Format::Jpeg,
+        "heic" => Format::Heic,
+        _ => return Err(std::io::Error::other(format!("unsupported file type .{extension}"))),
+    };
+    let bytes = encode(image, format, scale).ok_or_else(|| std::io::Error::other("encoding failed"))?;
+    std::fs::write(path, bytes)
+}
+
+/// Разбирает картинку и её масштаб из DPI. Без DPI считается, что пиксель равен точке.
+pub fn decode(bytes: &[u8]) -> Option<(CFRetained<CGImage>, f64)> {
+    let source = unsafe { CGImageSource::with_data(&CFData::from_bytes(bytes), None) }?;
+    let image = unsafe { source.image_at_index(0, None) }?;
+    let dpi = unsafe { source.properties_at_index(0, None) }.and_then(|properties| {
+        // SAFETY: свойства изображения - словарь со строковыми ключами, CFDictionary и NSDictionary взаимозаменяемы.
+        let properties: &NSDictionary<NSString, AnyObject> = unsafe { bridge::toll_free(&*properties) };
+        // SAFETY: ключ - константа ImageIO типа CFString, а CFString и NSString взаимозаменяемы.
+        let key: &NSString = unsafe { bridge::toll_free(kCGImagePropertyDPIWidth) };
+        bridge::number(properties, key).map(|n| n.doubleValue())
+    });
+    Some((image, (dpi.unwrap_or(72.0) / 72.0).max(1.0)))
 }
 
 pub fn encode_png(image: &CGImage, scale: f64) -> Option<Vec<u8>> {
@@ -180,13 +215,13 @@ fn now(format: &str) -> String {
 }
 
 /// Имя файла по шаблону с подстановками {date}, {time}, {mode} и {app}.
-fn file_name(template: &str, date: &str, time: &str, shot: &Shot) -> String {
+fn file_name(template: &str, date: &str, time: &str, mode: &str, app: &str) -> String {
     let render = |template: &str| {
         template
             .replace("{date}", date)
             .replace("{time}", time)
-            .replace("{mode}", shot.kind.title())
-            .replace("{app}", &shot.app)
+            .replace("{mode}", mode)
+            .replace("{app}", app)
             // "/" делит путь, а ":" Finder показывает как "/".
             .replace(['/', ':'], "-")
             .trim()
@@ -279,8 +314,6 @@ fn is_photographic(pixels: &[u32]) -> bool {
 mod tests {
     use super::*;
 
-    use crate::capture::Kind;
-
     #[test]
     fn unique_path_skips_taken_names() {
         let dir = std::env::temp_dir().join(format!("kadro-test-{}", std::process::id()));
@@ -294,16 +327,43 @@ mod tests {
 
     #[test]
     fn file_name_fills_tokens_and_falls_back_to_default() {
-        let shot = Shot { kind: Kind::Window, global_rect: CGRect::default(), app: "Notes/Work".into() };
-        assert_eq!(file_name("{app} {mode} {date}", "2026-11-03", "14.12.00", &shot), "Notes-Work Window 2026-11-03");
         assert_eq!(
-            file_name("Kadro {date} at {time}", "2026-11-03", "14.12.00", &shot),
+            file_name("{app} {mode} {date}", "2026-11-03", "14.12.00", "Window", "Notes/Work"),
+            "Notes-Work Window 2026-11-03"
+        );
+        assert_eq!(
+            file_name("Kadro {date} at {time}", "2026-11-03", "14.12.00", "Window", ""),
             "Kadro 2026-11-03 at 14.12.00"
         );
         // пустое приложение даёт пустое имя
-        let empty = Shot { app: String::new(), ..shot };
-        assert_eq!(file_name("{app}", "d", "t", &empty), "Kadro d at t");
-        assert_eq!(file_name(".hidden", "d", "t", &empty), "Kadro d at t");
+        assert_eq!(file_name("{app}", "d", "t", "Window", ""), "Kadro d at t");
+        assert_eq!(file_name(".hidden", "d", "t", "Window", ""), "Kadro d at t");
+    }
+
+    #[test]
+    fn write_to_picks_the_format_from_the_extension() {
+        let space = CGColorSpace::new_device_rgb();
+        // SAFETY: буфер null - Core Graphics выделит его сам.
+        let context = unsafe {
+            CGBitmapContextCreate(
+                std::ptr::null_mut(),
+                4,
+                2,
+                8,
+                0,
+                space.as_deref(),
+                CGImageAlphaInfo::PremultipliedLast.0,
+            )
+        }
+        .unwrap();
+        let image = CGBitmapContextCreateImage(Some(&context)).unwrap();
+        let dir = std::env::temp_dir().join(format!("kadro-write-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        write_to(&dir.join("a.JPG"), &image, 2.0).unwrap();
+        let (decoded, scale) = decode(&std::fs::read(dir.join("a.JPG")).unwrap()).unwrap();
+        assert_eq!((CGImage::width(Some(&decoded)), scale), (4, 2.0));
+        assert!(write_to(&dir.join("a.bmp"), &image, 1.0).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
