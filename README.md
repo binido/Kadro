@@ -24,7 +24,10 @@ Editor:
 - Opens from the preview (Edit), the menu (Edit Last Screenshot, Open File…, Open from Clipboard), a shortcut, or right after a capture when Show after capture is set to Editor. PNG, JPEG, HEIC and GIF files can be opened with Kadro from Finder.
 - Zoom with pinch or ⌘ + scroll (or the plain scroll wheel, if chosen), ⌘+ / ⌘− / ⌘0 (100%) / ⌘9 (fit), or the toolbar. 100% is one image pixel per screen pixel.
 - Crop (C or the toolbar, drag, Return), Uncrop to bring back everything cropped away, and Resize with a locked aspect ratio.
-- Every edit can be undone (⌘Z) and redone (⇧⌘Z). Edits never lose pixels: the result is always redrawn from the original capture.
+- Annotations from the tool column on the left or a single key: Select (V), Arrow (A), Line (L), Rectangle (R), Oval (O), Pen (P), Highlighter (H), Text (T), Counter (N), Blur (B), Pixelate (X), Spotlight (S) and Magnifier (M).
+- Arrows with a filled or open head or heads on both ends, solid or dashed lines, outlined, rounded or filled rectangles, outlined or filled ovals, text plain or on a background, numbered counters that renumber when one is removed, blur and pixelate in three strengths, spotlights that dim everything outside rectangles or ellipses, and a 2×, 3× or 4× circular magnifier.
+- Colour, size and style in the toolbar apply to the next annotation and to the selected one. Every annotation can be selected, moved by its body, reshaped by its ends or corners, restyled and deleted (Delete) until Rasterize flattens them into the image. Double-click a text to edit it.
+- Every edit can be undone (⌘Z) and redone (⇧⌘Z). Edits never lose pixels: the result is always redrawn from the original capture, and the exported image is the canvas pixel for pixel.
 - Copy (⌘C), Save to the screenshots folder (⌘S), Save As (⇧⌘S, format from the extension), Print (⌘P). Esc copies, saves or just closes, as chosen in settings.
 
 Pinned screenshots:

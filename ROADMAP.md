@@ -39,7 +39,7 @@ A version is done when all of these hold:
 | 0.3 | After-capture preview | Done |
 | 0.4 | Pinned screenshots | Done |
 | 0.5 | Editor foundation | Done |
-| 0.6 | Annotation tools | Planned |
+| 0.6 | Annotation tools | Done |
 | 0.7 | Measuring and composing | Planned |
 | 0.8 | Backgrounds and window frames | Planned |
 | 0.9 | Text and QR recognition | Planned |
@@ -151,7 +151,7 @@ Technical notes:
 
 Done when: a 6K Retina capture zooms and pans smoothly, undo covers every operation, and the exported file matches the canvas pixel for pixel.
 
-## 0.6 — Annotation tools
+## 0.6 — Annotation tools (shipped)
 
 **Goal:** mark up screenshots in the editor.
 

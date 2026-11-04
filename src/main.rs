@@ -2,6 +2,7 @@
 //!
 //! Здесь живут точка входа и пункт в строке меню. Захват, вывод и окна разнесены по модулям.
 
+mod annotation;
 mod assets;
 mod bridge;
 mod capture;
@@ -12,6 +13,7 @@ mod hotkeys;
 mod keys;
 mod output;
 mod overlay;
+mod paint;
 mod pin;
 mod prefs;
 mod preview;
