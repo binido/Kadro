@@ -174,6 +174,24 @@ pub fn save(
     shot: Option<&Shot>,
     png: Option<&[u8]>,
 ) -> std::io::Result<PathBuf> {
+    let (bytes, name, format) = encoded(image, scale, shot, png)?;
+    std::fs::create_dir_all(directory)?;
+    let path = unique_path(directory, &name, format.extension());
+    std::fs::write(&path, bytes)?;
+    if let Some(shot) = shot {
+        mark_as_screenshot(&path, shot);
+    }
+    Ok(path)
+}
+
+/// Снимок в формате из настроек и имя файла без расширения по шаблону.
+/// `png` - уже закодированный PNG, если он есть.
+pub fn encoded(
+    image: &CGImage,
+    scale: f64,
+    shot: Option<&Shot>,
+    png: Option<&[u8]>,
+) -> std::io::Result<(Vec<u8>, String, Format)> {
     let settings = Settings::load();
     let downscaled = (settings.downscale_retina && scale > 1.0).then(|| downscale(image, scale)).flatten();
     let format = match settings.format {
@@ -188,16 +206,9 @@ pub fn save(
         (None, _) => encode(image, format, scale),
     };
     let bytes = bytes.ok_or_else(|| std::io::Error::other(format!("{} encoding failed", format.extension())))?;
-    std::fs::create_dir_all(directory)?;
     let (date, time) = (now("yyyy-MM-dd"), now("HH.mm.ss"));
     let (mode, app) = shot.map_or(("Image", ""), |shot| (shot.kind.title(), shot.app.as_str()));
-    let name = file_name(&settings.file_name_template, &date, &time, mode, app);
-    let path = unique_path(directory, &name, format.extension());
-    std::fs::write(&path, bytes)?;
-    if let Some(shot) = shot {
-        mark_as_screenshot(&path, shot);
-    }
-    Ok(path)
+    Ok((bytes, file_name(&settings.file_name_template, &date, &time, mode, app), format))
 }
 
 /// Записывает картинку в выбранный путь. Формат берётся из расширения, незнакомое расширение - ошибка.
