@@ -9,10 +9,11 @@ use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSApplication, NSBeep, NSBezelStyle, NSButton, NSCellImagePosition, NSColor,
     NSColorSpace, NSColorWell, NSColorWellStyle, NSControl, NSControlStateValueOff, NSControlStateValueOn,
     NSControlTextEditingDelegate, NSEvent, NSEventModifierFlags, NSGridCell, NSGridCellPlacement, NSGridView,
-    NSLineBreakMode, NSModalResponseOK, NSOpenPanel, NSPopUpButton, NSResponder, NSSecureTextField, NSStackView,
-    NSTabView, NSTabViewController, NSTabViewControllerTabStyle, NSTabViewItem, NSTextAlignment, NSTextField,
-    NSTextFieldDelegate, NSUserInterfaceItemIdentification, NSView, NSViewController, NSWindow,
-    NSWindowCollectionBehavior, NSWindowStyleMask, NSWindowToolbarStyle, NSWorkspace,
+    NSImageView, NSLayoutAttribute, NSLineBreakMode, NSModalResponseOK, NSOpenPanel, NSPopUpButton, NSResponder,
+    NSSecureTextField, NSStackView, NSTabView, NSTabViewController, NSTabViewControllerTabStyle, NSTabViewItem,
+    NSTextAlignment, NSTextField, NSTextFieldDelegate, NSUserInterfaceItemIdentification,
+    NSUserInterfaceLayoutOrientation, NSView, NSViewController, NSWindow, NSWindowCollectionBehavior,
+    NSWindowStyleMask, NSWindowToolbarStyle, NSWorkspace,
 };
 use objc2_foundation::{
     NSArray, NSLocale, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRange, NSRect, NSSize, NSString, NSURL,
@@ -33,6 +34,8 @@ const FIELD_WIDTH: f64 = 240.0;
 /// Наибольшая ширина содержимого окна, до которой его можно растянуть.
 const MAX_WIDTH: f64 = 1000.0;
 const SHORTCUT_WIDTH: f64 = 140.0;
+const REPOSITORY_URL: &str = "https://github.com/binido/Kadro";
+const LICENSE_URL: &str = "https://github.com/binido/Kadro/blob/main/LICENSE";
 const KEYBOARD_SETTINGS_URL: &str = "x-apple.systempreferences:com.apple.Keyboard-Settings.extension";
 const FONT_SIZE: f64 = 13.0;
 
@@ -263,6 +266,14 @@ define_class!(
         #[unsafe(method(openKeyboardSettings:))]
         fn open_keyboard_settings(&self, _sender: &NSButton) {
             if let Some(url) = NSURL::URLWithString(ns_string!(KEYBOARD_SETTINGS_URL)) {
+                NSWorkspace::sharedWorkspace().openURL(&url);
+            }
+        }
+
+        // Адрес ссылки лежит в идентификаторе кнопки.
+        #[unsafe(method(openLink:))]
+        fn open_link(&self, sender: &NSButton) {
+            if let Some(url) = sender.identifier().and_then(|address| NSURL::URLWithString(&address)) {
                 NSWorkspace::sharedWorkspace().openURL(&url);
             }
         }
@@ -510,6 +521,7 @@ fn build_window(mtm: MainThreadMarker) -> Retained<NSWindow> {
         ("Editor", assets::SQUARE_PEN, editor_tab(mtm, &controller)),
         ("Upload", assets::CLOUD_UPLOAD, upload_tab(mtm, &controller)),
         ("Shortcuts", assets::KEYBOARD, shortcuts_tab(mtm, &controller)),
+        ("About", assets::INFO, about_tab(mtm, &controller)),
     ];
     // Все вкладки одной ширины, по самой широкой, высота у каждой своя.
     let width = pages.iter().map(|(_, _, view)| view.frame().size.width).fold(0.0, f64::max);
@@ -836,6 +848,74 @@ fn shortcuts_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSV
     );
     ShortcutButton::show(&message, "");
     rows
+}
+
+/// Версия, автор, лицензия и ссылка на репозиторий.
+fn about_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView> {
+    let icon = NSImageView::new(mtm);
+    icon.setImage(NSApplication::sharedApplication(mtm).applicationIconImage().as_deref());
+    icon.widthAnchor().constraintEqualToConstant(96.0).setActive(true);
+    icon.heightAnchor().constraintEqualToConstant(96.0).setActive(true);
+    let name = label(mtm, "Kadro");
+    name.setFont(Some(&assets::semibold_font(22.0)));
+    let version = label(mtm, &format!("Version {}", env!("CARGO_PKG_VERSION")));
+    version.setTextColor(Some(&NSColor::secondaryLabelColor()));
+    let summary = label(mtm, "Capture, annotate, recognize and share screenshots from the menu bar.");
+    let author = label(mtm, "Made by Binido");
+    let link = |title: &str, address: &str| {
+        let button = unsafe {
+            NSButton::buttonWithTitle_target_action(
+                &NSString::from_str(title),
+                Some(controller),
+                Some(sel!(openLink:)),
+                mtm,
+            )
+        };
+        button.setBordered(false);
+        // Иначе первая ссылка получает фокус при открытии вкладки и обводится рамкой.
+        button.setRefusesFirstResponder(true);
+        button.setFont(Some(&assets::font(FONT_SIZE)));
+        button.setContentTintColor(Some(&NSColor::linkColor()));
+        button.setIdentifier(Some(&NSString::from_str(address)));
+        view(&button)
+    };
+    let repository = link("github.com/binido/Kadro", REPOSITORY_URL);
+    let credits = label(mtm, "Space Grotesk font under the SIL Open Font License, Lucide icons under the ISC License.");
+    credits.setTextColor(Some(&NSColor::secondaryLabelColor()));
+    credits.setFont(Some(&assets::font(11.0)));
+
+    let stack = NSStackView::stackViewWithViews(
+        &NSArray::from_retained_slice(&[
+            view(&icon),
+            view(&name),
+            view(&version),
+            view(&summary),
+            view(&author),
+            link("MIT License", LICENSE_URL),
+            repository.clone(),
+            view(&credits),
+        ]),
+        mtm,
+    );
+    stack.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
+    stack.setAlignment(NSLayoutAttribute::CenterX);
+    stack.setSpacing(6.0);
+    stack.setCustomSpacing_afterView(12.0, &icon);
+    stack.setCustomSpacing_afterView(16.0, &version);
+    stack.setCustomSpacing_afterView(16.0, &summary);
+    stack.setCustomSpacing_afterView(16.0, &repository);
+
+    let size = stack.fittingSize();
+    let container = NSView::initWithFrame(
+        NSView::alloc(mtm),
+        NSRect::new(NSPoint::ZERO, NSSize::new(size.width + 2.0 * MARGIN, size.height + 2.0 * MARGIN)),
+    );
+    stack.setTranslatesAutoresizingMaskIntoConstraints(false);
+    container.addSubview(&stack);
+    // Блок по центру окна при любой ширине.
+    stack.centerXAnchor().constraintEqualToAnchor(&container.centerXAnchor()).setActive(true);
+    stack.topAnchor().constraintEqualToAnchor_constant(&container.topAnchor(), MARGIN).setActive(true);
+    container
 }
 
 /// Таблица настроек с отступами до краёв окна.
