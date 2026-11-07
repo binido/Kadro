@@ -70,6 +70,33 @@ Pinned screenshots:
 App:
 
 - Native menu bar app with configurable global shortcuts and launch at login.
+- The menu bar icon can be hidden. Opening Kadro again from Applications shows Settings, and the Show Kadro Menu shortcut opens the menu at the pointer.
+- Check for Updates compares with the latest GitHub release and offers to open its page; an automatic check runs once a day unless turned off.
+
+## Links
+
+`kadro://` links let other apps, scripts and Shortcuts drive Kadro. They are off by default; in Settings → General they can be allowed or set to ask before every link.
+
+| Link | What it does |
+|---|---|
+| `kadro://capture/region` | Capture a region |
+| `kadro://capture/repeat` | Capture the last region again |
+| `kadro://capture/screen` | Capture the screen under the pointer |
+| `kadro://capture/delayed` | Capture the screen after 3 seconds |
+| `kadro://capture/window` | Pick a window to capture |
+| `kadro://capture/active-window` | Capture the active window |
+| `kadro://capture/scrolling` | Scrolling capture |
+| `kadro://recognize` | Select an area and copy its text |
+| `kadro://pin` | Pin the last screenshot |
+| `kadro://edit` | Open the last screenshot in the editor |
+| `kadro://upload` | Upload the last screenshot |
+| `kadro://library` | Open the library |
+| `kadro://open?path=/absolute/path.png` | Open an image in the editor |
+| `kadro://clipboard` | Open the image on the clipboard in the editor |
+| `kadro://settings` | Open Settings |
+| `kadro://set?key=value&…` | Change settings |
+
+Settings that `kadro://set` accepts: `format` (`png`, `jpeg`, `heic`, `auto`), `cursor` (`auto`, `show`, `hide`), `after` (`preview`, `editor`, `nothing`), `hide-preview` (`auto`, `manual`), `window` (`clean`, `shadow`, `wallpaper`, `color`), `copy` and `save` (`on`, `off`), `folder` (an absolute path). Every value is checked before anything changes, for example `kadro://set?format=png&copy=on&save=off`.
 
 ## UI
 
@@ -85,6 +112,7 @@ A compact native preferences window uses Space Grotesk typography and Lucide ico
 - Text recognition language, joining recognized lines into one
 - Scrolling capture height limit, scroll speed, reversed direction
 - Library on or off, how many screenshots it remembers
+- Hide the menu bar icon, kadro:// links (off, ask, allow), daily update check
 - Launch at login
 - Show after capture: preview, editor, nothing
 - After screenshot: copy, save
@@ -110,7 +138,7 @@ A compact native preferences window uses Space Grotesk typography and Lucide ico
 - Capture region, repeat last region
 - Capture full screen, now or in 3 seconds
 - Capture window, capture active window
-- Scrolling capture, pin last screenshot, edit last screenshot, upload last screenshot, library, recognize text
+- Scrolling capture, pin last screenshot, edit last screenshot, upload last screenshot, library, recognize text, show the Kadro menu
 - Every shortcut can be recorded or cleared, with conflict detection against Kadro, macOS and other apps
 
 ## Technical constraints

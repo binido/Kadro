@@ -257,6 +257,9 @@ pub const UPLOAD_BUCKET: &str = "uploadBucket";
 pub const UPLOAD_PREFIX: &str = "uploadPrefix";
 pub const UPLOAD_PUBLIC_URL: &str = "uploadPublicUrl";
 pub const LIBRARY: &str = "library";
+pub const HIDE_ICON: &str = "hideMenuBarIcon";
+pub const CHECK_UPDATES: &str = "checkForUpdates";
+pub const LAST_UPDATE_CHECK: &str = "lastUpdateCheck";
 
 /// Какую ссылку копировать после загрузки.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -369,6 +372,36 @@ impl Choice for LibraryLimit {
             LibraryLimit::FiveThousand => "5000",
             LibraryLimit::TwentyThousand => "20000",
             LibraryLimit::Unlimited => "unlimited",
+        }
+    }
+}
+
+/// Что делать со ссылками `kadro://`.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum LinkPolicy {
+    Off,
+    /// Спрашивать перед каждой ссылкой.
+    Ask,
+    Allow,
+}
+
+impl Choice for LinkPolicy {
+    const DEFAULTS_KEY: &'static str = "urlScheme";
+    const ALL: &'static [Self] = &[LinkPolicy::Off, LinkPolicy::Ask, LinkPolicy::Allow];
+
+    fn title(self) -> &'static str {
+        match self {
+            LinkPolicy::Off => "Off",
+            LinkPolicy::Ask => "Ask first",
+            LinkPolicy::Allow => "Allow",
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            LinkPolicy::Off => "off",
+            LinkPolicy::Ask => "ask",
+            LinkPolicy::Allow => "allow",
         }
     }
 }
@@ -555,6 +588,11 @@ pub struct Settings {
     /// Вести библиотеку сохранённых снимков.
     pub library: bool,
     pub library_limit: LibraryLimit,
+    pub links: LinkPolicy,
+    /// Не показывать иконку в строке меню.
+    pub hide_icon: bool,
+    /// Раз в день проверять, вышла ли новая версия.
+    pub check_updates: bool,
 }
 
 impl Settings {
@@ -603,6 +641,9 @@ impl Settings {
             scroll_reverse: flag(SCROLL_REVERSE).unwrap_or(false),
             library: flag(LIBRARY).unwrap_or(true),
             library_limit: choice().unwrap_or(LibraryLimit::FiveThousand),
+            links: choice().unwrap_or(LinkPolicy::Off),
+            hide_icon: flag(HIDE_ICON).unwrap_or(false),
+            check_updates: flag(CHECK_UPDATES).unwrap_or(true),
         }
     }
 }
@@ -667,6 +708,7 @@ mod tests {
         assert_keys_round_trip::<LinkKind>();
         assert_keys_round_trip::<LinkExpiry>();
         assert_keys_round_trip::<LibraryLimit>();
+        assert_keys_round_trip::<LinkPolicy>();
     }
 
     #[test]

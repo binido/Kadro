@@ -46,7 +46,7 @@ A version is done when all of these hold:
 | 0.10 | Scrolling capture | Done |
 | 0.11 | Upload and share links | Done |
 | 0.12 | Screenshot library | Done |
-| 0.13 | URL scheme and app behavior | Planned |
+| 0.13 | URL scheme and app behavior | Done |
 | 1.0 | Complete, polished release | Planned |
 
 Update the status column in the PR that ships each version.
@@ -273,7 +273,7 @@ Technical notes:
 
 Done when: a folder with thousands of screenshots opens in under a second after the first index, and idle memory stays in budget while the window is closed.
 
-## 0.13 — URL scheme and app behaviour
+## 0.13 — URL scheme and app behaviour (shipped)
 
 **Goal:** automation and the remaining app settings.
 

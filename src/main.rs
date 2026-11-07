@@ -14,6 +14,7 @@ mod geometry;
 mod hotkeys;
 mod keys;
 mod library;
+mod links;
 mod measure;
 mod output;
 mod overlay;
@@ -26,6 +27,7 @@ mod scroll;
 mod settings;
 mod sigv4;
 mod stitch;
+mod updates;
 mod upload;
 
 use std::cell::OnceCell;
@@ -34,8 +36,8 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject, Sel};
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSCellImagePosition, NSEventModifierFlags,
-    NSMenu, NSMenuDelegate, NSMenuItem, NSStatusBar, NSStatusItem, NSVariableStatusItemLength,
+    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSCellImagePosition, NSEvent,
+    NSEventModifierFlags, NSMenu, NSMenuDelegate, NSMenuItem, NSStatusBar, NSStatusItem, NSVariableStatusItemLength,
 };
 use objc2_foundation::{NSArray, NSNotification, NSObject, NSObjectProtocol, NSString, NSURL, ns_string};
 
@@ -44,6 +46,27 @@ use hotkeys::Action;
 thread_local! {
     // Иконка исчезает из строки меню, как только NSStatusItem освобождается.
     static STATUS_ITEM: OnceCell<Retained<NSStatusItem>> = const { OnceCell::new() };
+    // Меню иконки. Сочетание Show Kadro Menu показывает его у курсора, даже если иконка скрыта.
+    static MENU: OnceCell<Retained<NSMenu>> = const { OnceCell::new() };
+}
+
+/// Показывает или прячет иконку в строке меню.
+pub fn set_icon_visible(visible: bool) {
+    STATUS_ITEM.with(|item| {
+        if let Some(item) = item.get() {
+            item.setVisible(visible);
+        }
+    });
+}
+
+/// Открывает меню Kadro у курсора.
+pub fn show_menu(mtm: MainThreadMarker) {
+    MENU.with(|menu| {
+        if let Some(menu) = menu.get() {
+            NSApplication::sharedApplication(mtm).activate();
+            menu.popUpMenuPositioningItem_atLocation_inView(None, NSEvent::mouseLocation(), None);
+        }
+    });
 }
 
 /// Показывает секунды отсчёта рядом с иконкой в строке меню, None - убирает.
@@ -69,12 +92,27 @@ define_class!(
         fn did_finish_launching(&self, _notification: &NSNotification) {
             self.install_status_item();
             hotkeys::install();
+            updates::check_on_launch();
         }
 
-        // Картинки, открытые через Kadro из Finder или перетащенные на его значок.
+        // Картинки, открытые через Kadro из Finder или перетащенные на его значок, и ссылки kadro://.
         #[unsafe(method(application:openURLs:))]
         fn open_urls(&self, _application: &NSApplication, urls: &NSArray<NSURL>) {
-            editor::open_urls(self.mtm(), urls);
+            for url in urls {
+                if url.scheme().is_some_and(|scheme| scheme.to_string() == links::SCHEME) {
+                    let text = url.absoluteString().map(|s| s.to_string()).unwrap_or_default();
+                    links::handle(self.mtm(), &text);
+                } else if let Some(path) = url.path() {
+                    editor::open_file(self.mtm(), std::path::Path::new(&path.to_string()));
+                }
+            }
+        }
+
+        // Повторный запуск уже открытого Kadro - путь к настройкам, когда иконка скрыта.
+        #[unsafe(method(applicationShouldHandleReopen:hasVisibleWindows:))]
+        fn should_handle_reopen(&self, _application: &NSApplication, _visible: bool) -> bool {
+            prefs::show(self.mtm());
+            true
         }
     }
 
@@ -112,6 +150,11 @@ define_class!(
             prefs::show(self.mtm());
         }
 
+        #[unsafe(method(checkForUpdates:))]
+        fn check_for_updates(&self, _sender: Option<&AnyObject>) {
+            updates::check(true);
+        }
+
         #[unsafe(method(openFile:))]
         fn open_file(&self, _sender: Option<&AnyObject>) {
             editor::choose_file(self.mtm());
@@ -142,6 +185,10 @@ impl AppDelegate {
         let menu = NSMenu::new(mtm);
         menu.setDelegate(Some(ProtocolObject::from_ref(self)));
         for (index, action) in Action::ALL.into_iter().enumerate() {
+            // Это сочетание и так открывает само меню.
+            if action == Action::ShowMenu {
+                continue;
+            }
             let item = self.add_item(&menu, action.title(), sel!(runAction:), "", action_icon(action));
             item.setTag(tag_for_action(index));
         }
@@ -149,6 +196,7 @@ impl AppDelegate {
         self.add_item(&menu, "Open File…", sel!(openFile:), "o", assets::FOLDER_OPEN);
         self.add_item(&menu, "Open from Clipboard", sel!(openClipboard:), "", assets::CLIPBOARD_PASTE);
         menu.addItem(&NSMenuItem::separatorItem(mtm));
+        self.add_item(&menu, "Check for Updates…", sel!(checkForUpdates:), "", assets::REPEAT);
         self.add_item(&menu, "Settings…", sel!(showSettings:), ",", assets::SETTINGS);
         menu.addItem(&NSMenuItem::separatorItem(mtm));
         // Без target действие уходит по цепочке ответчиков и попадает в NSApplication.
@@ -160,8 +208,12 @@ impl AppDelegate {
             )
         };
         item.setMenu(Some(&menu));
+        item.setVisible(!settings::Settings::load().hide_icon);
         STATUS_ITEM.with(|slot| {
             let _ = slot.set(item);
+        });
+        MENU.with(|slot| {
+            let _ = slot.set(menu);
         });
     }
 
@@ -193,6 +245,7 @@ fn action_icon(action: Action) -> &'static [u8] {
         Action::ScrollCapture => assets::SCROLL,
         Action::UploadLast => assets::CLOUD_UPLOAD,
         Action::OpenLibrary => assets::LIBRARY,
+        Action::ShowMenu => assets::APERTURE,
     }
 }
 
