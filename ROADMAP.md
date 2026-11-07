@@ -47,7 +47,7 @@ A version is done when all of these hold:
 | 0.11 | Upload and share links | Done |
 | 0.12 | Screenshot library | Done |
 | 0.13 | URL scheme and app behavior | Done |
-| 0.14 | Visual polish | In progress |
+| 0.14 | Visual polish | Done |
 | 1.0 | Complete, polished release | Planned |
 
 Update the status column in the PR that ships each version.
@@ -287,7 +287,7 @@ Features:
 
 Done when: every documented URL works, and the URL list is in README.
 
-## 0.14 — Visual polish
+## 0.14 — Visual polish (shipped)
 
 **Goal:** fix what looks or feels off before 1.0. The list grows from manual testing.
 
