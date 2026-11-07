@@ -35,6 +35,12 @@ Editor:
 - Every edit can be undone (⌘Z) and redone (⇧⌘Z). Edits never lose pixels: the result is always redrawn from the original capture, and the exported image is the canvas pixel for pixel.
 - Copy (⌘C), Save to the screenshots folder (⌘S), Save As (⇧⌘S, format from the extension), Print (⌘P). Esc copies, saves or just closes, as chosen in settings.
 
+Text and codes:
+
+- Recognize Text (a shortcut or the menu) selects an area and copies its text without saving an image. The preview and the editor have the same action for the whole screenshot.
+- QR codes and barcodes are read in the same pass: a link is offered to open or copy, other contents are copied.
+- Recognition uses Apple Vision on the Mac, with no network. The language is the system's or one chosen in settings, and lines can be joined into one.
+
 Pinned screenshots:
 
 - Pin a capture from its preview, or pin the last screenshot from the menu or a shortcut. The pin opens exactly where the capture was taken, at 100% (one image pixel per screen pixel).
@@ -62,6 +68,7 @@ A compact native preferences window uses Space Grotesk typography and Lucide ico
 - Screenshots folder, file name template, save format, Retina downscaling
 - Cursor in screenshots
 - What is behind captured windows: no shadow, transparent, wallpaper, colour
+- Text recognition language, joining recognized lines into one
 - Launch at login
 - Show after capture: preview, editor, nothing
 - After screenshot: copy, save
@@ -80,7 +87,7 @@ A compact native preferences window uses Space Grotesk typography and Lucide ico
 - Capture region, repeat last region
 - Capture full screen, now or in 3 seconds
 - Capture window, capture active window
-- Pin last screenshot, edit last screenshot
+- Pin last screenshot, edit last screenshot, recognize text
 - Every shortcut can be recorded or cleared, with conflict detection against Kadro, macOS and other apps
 
 ## Technical constraints

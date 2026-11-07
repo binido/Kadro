@@ -13,7 +13,7 @@ use objc2_core_foundation::{CFArray, CFRetained};
 use objc2_foundation::{NSArray, NSDictionary, NSString, NSUserDefaults, ns_string};
 
 use crate::bridge::{self, number};
-use crate::{capture, editor, overlay, pin};
+use crate::{capture, editor, output, overlay, pin};
 
 type OSStatus = i32;
 
@@ -182,11 +182,12 @@ pub enum Action {
     ActiveWindow,
     PinLast,
     EditLast,
+    RecognizeText,
 }
 
 impl Action {
     /// Порядок пунктов в меню и строк в настройках.
-    pub const ALL: [Action; 8] = [
+    pub const ALL: [Action; 9] = [
         Action::Region,
         Action::RepeatRegion,
         Action::Screen,
@@ -195,6 +196,7 @@ impl Action {
         Action::ActiveWindow,
         Action::PinLast,
         Action::EditLast,
+        Action::RecognizeText,
     ];
 
     pub fn title(self) -> &'static str {
@@ -207,6 +209,7 @@ impl Action {
             Action::ActiveWindow => "Capture Active Window",
             Action::PinLast => "Pin Last Screenshot",
             Action::EditLast => "Edit Last Screenshot",
+            Action::RecognizeText => "Recognize Text",
         }
     }
 
@@ -224,6 +227,12 @@ impl Action {
             Action::ActiveWindow => capture::capture_active_window(mtm),
             Action::PinLast => pin::pin_last(mtm),
             Action::EditLast => editor::open_last(mtm),
+            Action::RecognizeText => {
+                output::route_next(output::Route::Text);
+                if !overlay::select(mtm, overlay::Mode::Region) {
+                    output::cancel_route();
+                }
+            }
         }
     }
 
@@ -242,6 +251,7 @@ impl Action {
             Action::ActiveWindow => "shortcutActiveWindow",
             Action::PinLast => "shortcutPinLast",
             Action::EditLast => "shortcutEditLast",
+            Action::RecognizeText => "shortcutRecognizeText",
         }
     }
 
@@ -255,7 +265,8 @@ impl Action {
             | Action::DelayedScreen
             | Action::ActiveWindow
             | Action::PinLast
-            | Action::EditLast => {
+            | Action::EditLast
+            | Action::RecognizeText => {
                 return None;
             }
         };

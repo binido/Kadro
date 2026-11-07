@@ -42,7 +42,7 @@ A version is done when all of these hold:
 | 0.6 | Annotation tools | Done |
 | 0.7 | Measuring and composing | Done |
 | 0.8 | Backgrounds and window frames | Done |
-| 0.9 | Text and QR recognition | Planned |
+| 0.9 | Text and QR recognition | Done |
 | 0.10 | Scrolling capture | Planned |
 | 0.11 | Upload and share links | Planned |
 | 0.12 | Screenshot library | Planned |
@@ -204,7 +204,7 @@ Technical notes:
 
 Done when: each background option exports correctly for window, area and full-screen captures.
 
-## 0.9 — Text and QR recognition
+## 0.9 — Text and QR recognition (shipped)
 
 **Goal:** get text and codes out of screenshots.
 

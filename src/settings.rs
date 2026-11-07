@@ -23,6 +23,8 @@ pub const EDITOR_ON_TOP: &str = "editorOnTop";
 pub const EDITOR_SCROLL_ZOOM: &str = "editorScrollZoom";
 pub const WINDOW_BACKGROUND: &str = "windowBackground";
 pub const WINDOW_COLOR: &str = "windowBackgroundColor";
+pub const RECOGNITION_LANGUAGE: &str = "recognitionLanguage";
+pub const RECOGNITION_SINGLE_LINE: &str = "recognitionSingleLine";
 pub const PREVIEW_HIDING: &str = "previewHiding";
 pub const CONFIRMATION: &str = "confirmation";
 
@@ -336,6 +338,10 @@ pub struct Settings {
     pub scroll_zoom: bool,
     pub window_background: WindowBackground,
     pub window_color: Color,
+    /// Язык распознавания текста. None - языки системы.
+    pub recognition_language: Option<String>,
+    /// Склеивать распознанные строки в одну.
+    pub single_line: bool,
 }
 
 impl Settings {
@@ -377,6 +383,8 @@ impl Settings {
                 blue: 1.0,
                 alpha: 1.0,
             }),
+            recognition_language: string(RECOGNITION_LANGUAGE).filter(|language| !language.is_empty()),
+            single_line: flag(RECOGNITION_SINGLE_LINE).unwrap_or(false),
         }
     }
 }

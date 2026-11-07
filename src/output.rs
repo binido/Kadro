@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::ffi::{CString, c_char, c_int, c_void};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use dispatch2::{DispatchQoS, DispatchQueue, GlobalQueueIdentifier};
 use objc2::MainThreadMarker;
@@ -30,7 +31,7 @@ use objc2_image_io::{
 
 use crate::capture::{Kind, Shot};
 use crate::settings::{AfterCapture, DEFAULT_FILE_NAME_TEMPLATE, Format, Settings, WindowBackground};
-use crate::{backdrop, bridge, editor, pin, preview};
+use crate::{backdrop, bridge, editor, pin, preview, recognize};
 
 unsafe extern "C" {
     fn setxattr(
@@ -43,12 +44,47 @@ unsafe extern "C" {
     ) -> c_int;
 }
 
+/// Куда идёт следующий снимок области вместо обычного вывода.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Route {
+    Normal,
+    /// На холст редактора, который его ждёт.
+    Editor,
+    /// Только в распознавание текста.
+    Text,
+}
+
+/// Маршрут следующего снимка. Ставится на главном потоке, читается в потоке захвата.
+static ROUTE: AtomicU8 = AtomicU8::new(0);
+
+/// Направляет следующий снимок области мимо буфера обмена, файла и превью.
+pub fn route_next(route: Route) {
+    ROUTE.store(route as u8, Ordering::SeqCst);
+}
+
+/// Выделение отменили, следующий снимок идёт обычным путём.
+pub fn cancel_route() {
+    route_next(Route::Normal);
+}
+
+fn take_route() -> Route {
+    match ROUTE.swap(Route::Normal as u8, Ordering::SeqCst) {
+        1 => Route::Editor,
+        2 => Route::Text,
+        _ => Route::Normal,
+    }
+}
+
 /// Отдаёт снимок: подкладывает фон за окном, если он выбран, затем копирует, сохраняет и показывает.
 pub fn deliver(image: &CGImage, scale: f64, shot: &Shot) {
-    // Снимок для вставки в редактор не копируется, не сохраняется и не становится последним.
-    if editor::take_adding() {
-        let image = retain(image);
-        return DispatchQueue::main().exec_async(move || editor::place_capture(image, scale));
+    // Снимок для редактора или распознавания не копируется, не сохраняется и не становится последним.
+    match take_route() {
+        Route::Editor => {
+            let image = retain(image);
+            return DispatchQueue::main().exec_async(move || editor::place_capture(image, scale));
+        }
+        Route::Text => return recognize::recognize_and_show(retain(image)),
+        Route::Normal => {}
     }
     let settings = Settings::load();
     let background = settings.window_background;

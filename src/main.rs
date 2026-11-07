@@ -19,6 +19,7 @@ mod paint;
 mod pin;
 mod prefs;
 mod preview;
+mod recognize;
 mod settings;
 
 use std::cell::OnceCell;
@@ -182,6 +183,7 @@ fn action_icon(action: Action) -> &'static [u8] {
         Action::ActiveWindow => assets::APP_WINDOW_MAC,
         Action::PinLast => assets::PIN,
         Action::EditLast => assets::SQUARE_PEN,
+        Action::RecognizeText => assets::SCAN_TEXT,
     }
 }
 
