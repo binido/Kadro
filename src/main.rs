@@ -4,6 +4,7 @@
 
 mod annotation;
 mod assets;
+mod backdrop;
 mod bridge;
 mod capture;
 mod document;

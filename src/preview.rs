@@ -473,7 +473,7 @@ pub fn configure_floating(panel: &NSPanel) {
 
 /// Экран, где сделан снимок, по центру его области. Если такого уже нет - главный.
 /// `None`, только если к Mac не подключён ни один дисплей.
-fn screen_for(mtm: MainThreadMarker, shot: &Shot) -> Option<Retained<NSScreen>> {
+pub fn screen_for(mtm: MainThreadMarker, shot: &Shot) -> Option<Retained<NSScreen>> {
     let center = geometry::center(to_cocoa(mtm, shot.global_rect));
     let screens = NSScreen::screens(mtm);
     screens

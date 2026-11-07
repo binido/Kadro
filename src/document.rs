@@ -9,6 +9,7 @@ use std::ptr;
 use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 
 use crate::annotation::{Annotation, Point};
+use crate::backdrop::{self, Backdrop, Layout};
 use crate::paint;
 use objc2_core_graphics::{
     CGBitmapContextCreate, CGBitmapContextCreateImage, CGContext, CGImage, CGImageAlphaInfo, CGImageByteOrderInfo,
@@ -97,6 +98,8 @@ pub struct Doc {
     pub annotations: Vec<Annotation>,
     /// Номер основы в списке основ редактора. 0 - исходный снимок.
     pub base: usize,
+    /// Подложка под снимком. None - снимок как есть.
+    pub backdrop: Option<Backdrop>,
 }
 
 /// Отмена и повтор: список состояний и место текущего в нём.
@@ -122,6 +125,13 @@ impl<T: Clone + PartialEq> History<T> {
         self.states.truncate(self.current + 1);
         self.states.push(state);
         self.current += 1;
+    }
+
+    /// Заменяет текущее состояние, не добавляя шаг отмены. Так ползунок, пока его тянут,
+    /// не заполняет историю промежуточными значениями.
+    pub fn amend(&mut self, state: T) {
+        self.states.truncate(self.current + 1);
+        self.states[self.current] = state;
     }
 
     pub fn can_undo(&self) -> bool {
@@ -178,6 +188,23 @@ pub fn render(
     let bounds = CGRect::new(CGPoint::ZERO, CGSize::new(state.width, state.height));
     CGContext::draw_image(Some(&context), bounds, Some(&annotated));
     CGBitmapContextCreateImage(Some(&context))
+}
+
+/// Результат с подложкой, если она есть, и где на нём лежит снимок.
+pub fn present(
+    images: &[CFRetained<CGImage>],
+    doc: &Doc,
+    hidden: Option<usize>,
+    scale: f64,
+) -> Option<(CFRetained<CGImage>, Layout)> {
+    let content = render(images, doc, hidden, scale)?;
+    match &doc.backdrop {
+        Some(backdrop) => backdrop::compose(&content, backdrop, scale),
+        None => {
+            let (width, height) = (doc.state.width, doc.state.height);
+            Some((content, Layout { width, height, card: (0.0, 0.0, width, height), content: (0.0, 0.0) }))
+        }
+    }
 }
 
 /// Впечатывает аннотации в основу целиком, без обрезки и изменения размера.
@@ -257,7 +284,7 @@ mod tests {
     }
 
     fn doc(state: State, annotations: Vec<Annotation>) -> Doc {
-        Doc { state, annotations, base: 0 }
+        Doc { state, annotations, base: 0, backdrop: None }
     }
 
     #[test]
@@ -344,6 +371,12 @@ mod tests {
         assert_eq!(*history.current(), c);
         // правка без изменений не попадает в историю
         history.push(c);
+        assert!(history.undo());
+        assert_eq!(*history.current(), a);
+        // поправка заменяет текущее состояние без нового шага
+        history.redo();
+        history.amend(b);
+        assert_eq!(*history.current(), b);
         assert!(history.undo());
         assert_eq!(*history.current(), a);
     }

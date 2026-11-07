@@ -28,9 +28,9 @@ use objc2_image_io::{
     kCGImagePropertyGIFLoopCount,
 };
 
-use crate::capture::Shot;
-use crate::settings::{AfterCapture, DEFAULT_FILE_NAME_TEMPLATE, Format, Settings};
-use crate::{bridge, editor, pin, preview};
+use crate::capture::{Kind, Shot};
+use crate::settings::{AfterCapture, DEFAULT_FILE_NAME_TEMPLATE, Format, Settings, WindowBackground};
+use crate::{backdrop, bridge, editor, pin, preview};
 
 unsafe extern "C" {
     fn setxattr(
@@ -43,13 +43,33 @@ unsafe extern "C" {
     ) -> c_int;
 }
 
-/// Отдаёт снимок в буфер обмена и в файл согласно настройкам, затем показывает превью или подтверждение.
+/// Отдаёт снимок: подкладывает фон за окном, если он выбран, затем копирует, сохраняет и показывает.
 pub fn deliver(image: &CGImage, scale: f64, shot: &Shot) {
     // Снимок для вставки в редактор не копируется, не сохраняется и не становится последним.
     if editor::take_adding() {
         let image = retain(image);
         return DispatchQueue::main().exec_async(move || editor::place_capture(image, scale));
     }
+    let settings = Settings::load();
+    let background = settings.window_background;
+    if shot.kind == Kind::Window && matches!(background, WindowBackground::Wallpaper | WindowBackground::Color) {
+        // Обои экрана узнаются на главном потоке, а рисование и вывод снова уходят в фон.
+        let (image, shot, color) = (retain(image), shot.clone(), settings.window_color);
+        return DispatchQueue::main().exec_async(move || {
+            let Some(mtm) = MainThreadMarker::new() else { return };
+            let wallpaper =
+                if background == WindowBackground::Wallpaper { backdrop::wallpaper(mtm, &shot) } else { None };
+            in_background(move || {
+                let framed = backdrop::behind_window(&image, scale, shot.global_rect, wallpaper.as_ref(), color);
+                finish(framed.as_deref().unwrap_or(&image), scale, &shot);
+            });
+        });
+    }
+    finish(image, scale, shot);
+}
+
+/// Копирует и сохраняет готовый снимок, затем показывает превью или подтверждение.
+fn finish(image: &CGImage, scale: f64, shot: &Shot) {
     let settings = Settings::load();
     let png = if settings.copy_to_clipboard { copy(image, scale) } else { None };
     let saved = if settings.save_to_file {

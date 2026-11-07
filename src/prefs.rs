@@ -6,11 +6,12 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject, Sel};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSAlert, NSApplication, NSBeep, NSBezelStyle, NSBox, NSBoxType, NSButton, NSCellImagePosition, NSColor, NSControl,
-    NSControlStateValueOff, NSControlStateValueOn, NSControlTextEditingDelegate, NSEvent, NSEventModifierFlags,
-    NSGridCell, NSGridCellPlacement, NSGridView, NSLineBreakMode, NSModalResponseOK, NSOpenPanel, NSResponder,
-    NSStackView, NSTabViewController, NSTabViewControllerTabStyle, NSTabViewItem, NSTextField, NSTextFieldDelegate,
-    NSView, NSViewController, NSWindow, NSWindowStyleMask, NSWindowToolbarStyle, NSWorkspace,
+    NSAlert, NSApplication, NSBeep, NSBezelStyle, NSBox, NSBoxType, NSButton, NSCellImagePosition, NSColor,
+    NSColorSpace, NSColorWell, NSColorWellStyle, NSControl, NSControlStateValueOff, NSControlStateValueOn,
+    NSControlTextEditingDelegate, NSEvent, NSEventModifierFlags, NSGridCell, NSGridCellPlacement, NSGridView,
+    NSLineBreakMode, NSModalResponseOK, NSOpenPanel, NSResponder, NSStackView, NSTabViewController,
+    NSTabViewControllerTabStyle, NSTabViewItem, NSTextField, NSTextFieldDelegate, NSView, NSViewController, NSWindow,
+    NSWindowStyleMask, NSWindowToolbarStyle, NSWorkspace,
 };
 use objc2_foundation::{
     NSArray, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRange, NSRect, NSSize, NSString, NSURL, ns_string,
@@ -20,7 +21,7 @@ use objc2_service_management::{SMAppService, SMAppServiceStatus};
 use crate::hotkeys::{self, Action, Shortcut};
 use crate::settings::{
     self, AfterCapture, Choice, Confirmation, Cursor, DEFAULT_FILE_NAME_TEMPLATE, DefaultZoom, EscAction, Format,
-    PreviewHiding, Settings,
+    PreviewHiding, Settings, WindowBackground,
 };
 use crate::{assets, keys};
 
@@ -107,6 +108,20 @@ define_class!(
         #[unsafe(method(changeConfirmation:))]
         fn change_confirmation(&self, sender: &NSButton) {
             store_choice::<Confirmation>(sender);
+        }
+
+        #[unsafe(method(changeWindowBackground:))]
+        fn change_window_background(&self, sender: &NSButton) {
+            store_choice::<WindowBackground>(sender);
+        }
+
+        #[unsafe(method(changeWindowColor:))]
+        fn change_window_color(&self, sender: &NSColorWell) {
+            if let Some(rgb) = sender.color().colorUsingColorSpace(&NSColorSpace::sRGBColorSpace()) {
+                let byte = |v: f64| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+                let hex = format!("#{:02X}{:02X}{:02X}", byte(rgb.redComponent()), byte(rgb.greenComponent()), byte(rgb.blueComponent()));
+                settings::set_string(settings::WINDOW_COLOR, &hex);
+            }
         }
 
         #[unsafe(method(changeFormat:))]
@@ -387,6 +402,17 @@ fn general_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSVie
 
     let formats = radios(mtm, current.format, controller, sel!(changeFormat:));
     let cursor = radios(mtm, current.cursor, controller, sel!(changeCursor:));
+    let mut window_background = radios(mtm, current.window_background, controller, sel!(changeWindowBackground:));
+    let window_color =
+        NSColorWell::initWithFrame(NSColorWell::alloc(mtm), NSRect::new(NSPoint::ZERO, NSSize::new(38.0, 24.0)));
+    window_color.setColorWellStyle(NSColorWellStyle::Minimal);
+    let c = current.window_color;
+    window_color.setColor(&NSColor::colorWithSRGBRed_green_blue_alpha(c.red, c.green, c.blue, 1.0));
+    unsafe {
+        window_color.setTarget(Some(controller));
+        window_color.setAction(Some(sel!(changeWindowColor:)));
+    }
+    window_background.push(view(&window_color));
 
     let file_name = NSTextField::textFieldWithString(&NSString::from_str(&current.file_name_template), mtm);
     file_name.setPlaceholderString(Some(&NSString::from_str(DEFAULT_FILE_NAME_TEMPLATE)));
@@ -423,6 +449,7 @@ fn general_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSVie
             Row::Field("Resize retina screenshots", view(&downscale)),
             Row::Separator,
             Row::Field("Cursor in screenshots", inline(mtm, &cursor)),
+            Row::Field("Behind windows", inline(mtm, &window_background)),
             Row::Separator,
             Row::Field("Autostart", view(&login)),
             Row::Separator,

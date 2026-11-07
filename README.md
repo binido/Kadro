@@ -9,7 +9,7 @@ Capture:
 - A selected region. While selecting, Kadro shows the size in pixels and a magnifier loupe at the pointer. Arrow keys move the dragged corner by one point (Shift: ten), and holding Shift keeps the selection square.
 - The last selected region again, without selecting.
 - The entire screen under the pointer, right away or after a 3-second countdown in the menu bar.
-- A window picked with the pointer, or the active window straight away. Window captures have no shadow.
+- A window picked with the pointer, or the active window straight away. Behind a captured window: nothing (no shadow), transparency with its shadow, the wallpaper of its screen, or a chosen colour.
 - Multiple displays and Retina displays, each at its own scale.
 
 Output:
@@ -31,6 +31,7 @@ Editor:
 - Color Picker (I): a box next to the pointer shows the colour under it, and a click copies it as HEX, RGB or HSL (sRGB).
 - Add Capture takes a region capture and places it on the canvas, where it moves and resizes like any annotation. Moved annotations snap to the edges and centres of the canvas and of each other.
 - Export GIF saves a two-frame GIF that alternates the image with and without annotations every second.
+- Backdrop puts the screenshot on a gradient, mesh gradient, solid colour or a blurred copy of itself, with padding, shadow, corner radius for the screenshot and for the whole image, an inset in the screenshot's edge colour, a fixed aspect ratio and trimming of plain edges. Randomize and Reverse change the gradient. The backdrop stays adjustable and can be undone like any edit.
 - Every edit can be undone (⌘Z) and redone (⇧⌘Z). Edits never lose pixels: the result is always redrawn from the original capture, and the exported image is the canvas pixel for pixel.
 - Copy (⌘C), Save to the screenshots folder (⌘S), Save As (⇧⌘S, format from the extension), Print (⌘P). Esc copies, saves or just closes, as chosen in settings.
 
@@ -60,6 +61,7 @@ A compact native preferences window uses Space Grotesk typography and Lucide ico
 
 - Screenshots folder, file name template, save format, Retina downscaling
 - Cursor in screenshots
+- What is behind captured windows: no shadow, transparent, wallpaper, colour
 - Launch at login
 - Show after capture: preview, editor, nothing
 - After screenshot: copy, save
