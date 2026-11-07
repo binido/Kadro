@@ -18,6 +18,11 @@ pub fn pixel(image: &CGImage, x: usize, y: usize) -> Option<[u8; 3]> {
     strip(image, x, y, 1, 1)?.first().copied()
 }
 
+/// Все пиксели картинки по строкам сверху вниз.
+pub fn pixels(image: &CGImage) -> Option<Vec<[u8; 3]>> {
+    strip(image, 0, 0, CGImage::width(Some(image)), CGImage::height(Some(image)))
+}
+
 /// Строка пикселей по всей ширине картинки.
 pub fn row(image: &CGImage, y: usize) -> Option<Vec<[u8; 3]>> {
     strip(image, 0, y, CGImage::width(Some(image)), 1)
@@ -90,10 +95,15 @@ fn hsl(color: [u8; 3]) -> (f64, f64, f64) {
     (sector * 60.0, saturation * 100.0, lightness * 100.0)
 }
 
+/// Цвета почти совпадают: разница каналов не больше порога края.
+pub fn similar(a: [u8; 3], b: [u8; 3]) -> bool {
+    a.iter().zip(b).all(|(x, y)| x.abs_diff(y) <= EDGE_THRESHOLD)
+}
+
 /// Границы участка того же цвета, что и пиксель `at`, включительно.
 pub fn span(line: &[[u8; 3]], at: usize) -> (usize, usize) {
     let reference = line[at];
-    let same = |p: &[u8; 3]| p.iter().zip(reference).all(|(a, b)| a.abs_diff(b) <= EDGE_THRESHOLD);
+    let same = |p: &[u8; 3]| similar(*p, reference);
     let start = line[..at].iter().rposition(|p| !same(p)).map_or(0, |i| i + 1);
     let end = line[at..].iter().position(|p| !same(p)).map_or(line.len() - 1, |i| at + i - 1);
     (start, end)

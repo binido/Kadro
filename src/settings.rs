@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 use objc2_foundation::{NSNumber, NSString, NSUserDefaults};
 
+use crate::annotation::Color;
+
 pub const COPY_TO_CLIPBOARD: &str = "copyToClipboard";
 pub const SAVE_TO_FILE: &str = "saveToFile";
 pub const FORMAT: &str = "format";
@@ -19,6 +21,8 @@ pub const EDITOR_ESC: &str = "editorEsc";
 pub const EDITOR_ZOOM: &str = "editorZoom";
 pub const EDITOR_ON_TOP: &str = "editorOnTop";
 pub const EDITOR_SCROLL_ZOOM: &str = "editorScrollZoom";
+pub const WINDOW_BACKGROUND: &str = "windowBackground";
+pub const WINDOW_COLOR: &str = "windowBackgroundColor";
 pub const PREVIEW_HIDING: &str = "previewHiding";
 pub const CONFIRMATION: &str = "confirmation";
 
@@ -122,6 +126,51 @@ impl Choice for Cursor {
             Cursor::Hide => "hide",
         }
     }
+}
+
+/// Что лежит за окном на снимке окна.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum WindowBackground {
+    /// Только окно, без тени.
+    Clean,
+    /// Окно с тенью на прозрачном фоне.
+    Shadow,
+    /// Окно с тенью на обоях его экрана.
+    Wallpaper,
+    /// Окно с тенью на цвете из настроек.
+    Color,
+}
+
+impl Choice for WindowBackground {
+    const DEFAULTS_KEY: &'static str = WINDOW_BACKGROUND;
+    const ALL: &'static [Self] =
+        &[WindowBackground::Clean, WindowBackground::Shadow, WindowBackground::Wallpaper, WindowBackground::Color];
+
+    fn title(self) -> &'static str {
+        match self {
+            WindowBackground::Clean => "No shadow",
+            WindowBackground::Shadow => "Transparent",
+            WindowBackground::Wallpaper => "Wallpaper",
+            WindowBackground::Color => "Color",
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            WindowBackground::Clean => "clean",
+            WindowBackground::Shadow => "shadow",
+            WindowBackground::Wallpaper => "wallpaper",
+            WindowBackground::Color => "color",
+        }
+    }
+}
+
+/// Цвет из записи `#RRGGBB`.
+pub fn parse_color(text: &str) -> Option<Color> {
+    let digits = text.strip_prefix('#')?;
+    let rgb = u32::from_str_radix(digits, 16).ok().filter(|_| digits.len() == 6)?;
+    let channel = |shift: u32| f64::from((rgb >> shift) & 0xff) / 255.0;
+    Some(Color { red: channel(16), green: channel(8), blue: channel(0), alpha: 1.0 })
 }
 
 /// Когда прятать превью после снимка.
@@ -285,6 +334,8 @@ pub struct Settings {
     pub default_zoom: DefaultZoom,
     pub editor_on_top: bool,
     pub scroll_zoom: bool,
+    pub window_background: WindowBackground,
+    pub window_color: Color,
 }
 
 impl Settings {
@@ -319,6 +370,13 @@ impl Settings {
             default_zoom: choice().unwrap_or(DefaultZoom::Actual),
             editor_on_top: flag(EDITOR_ON_TOP).unwrap_or(false),
             scroll_zoom: flag(EDITOR_SCROLL_ZOOM).unwrap_or(false),
+            window_background: choice().unwrap_or(WindowBackground::Clean),
+            window_color: string(WINDOW_COLOR).and_then(|text| parse_color(&text)).unwrap_or(Color {
+                red: 1.0,
+                green: 1.0,
+                blue: 1.0,
+                alpha: 1.0,
+            }),
         }
     }
 }
@@ -377,5 +435,14 @@ mod tests {
         assert_keys_round_trip::<AfterCapture>();
         assert_keys_round_trip::<EscAction>();
         assert_keys_round_trip::<DefaultZoom>();
+        assert_keys_round_trip::<WindowBackground>();
+    }
+
+    #[test]
+    fn window_colour_is_read_from_hex() {
+        let color = parse_color("#3366CC").unwrap();
+        assert_eq!((color.red, color.green, color.blue), (0.2, 0.4, 0.8));
+        assert_eq!(parse_color("336699"), None);
+        assert_eq!(parse_color("#12345"), None);
     }
 }

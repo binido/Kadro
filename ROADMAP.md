@@ -41,7 +41,7 @@ A version is done when all of these hold:
 | 0.5 | Editor foundation | Done |
 | 0.6 | Annotation tools | Done |
 | 0.7 | Measuring and composing | Done |
-| 0.8 | Backgrounds and window frames | Planned |
+| 0.8 | Backgrounds and window frames | Done |
 | 0.9 | Text and QR recognition | Planned |
 | 0.10 | Scrolling capture | Planned |
 | 0.11 | Upload and share links | Planned |
@@ -188,7 +188,7 @@ Features:
 
 Done when: ruler and picker values match pixel data in tests, and GIF export opens in Safari and Preview.
 
-## 0.8 — Backgrounds and window frames
+## 0.8 — Backgrounds and window frames (shipped)
 
 **Goal:** presentation-ready screenshots.
 

@@ -17,13 +17,14 @@ use objc2_app_kit::{
     NSAffineTransformNSAppKitAdditions, NSAlert, NSAlertFirstButtonReturn, NSApplication, NSAutoresizingMaskOptions,
     NSBackingStoreType, NSBeep, NSBezelStyle, NSBezierPath, NSButton, NSButtonType, NSClipView, NSColor, NSColorSpace,
     NSColorWell, NSColorWellStyle, NSCompositingOperation, NSControlStateValueOff, NSControlStateValueOn,
-    NSControlTextEditingDelegate, NSCursor, NSEvent, NSEventModifierFlags, NSFloatingWindowLevel, NSGraphicsContext,
-    NSImage, NSImageScaling, NSImageView, NSModalResponseOK, NSNormalWindowLevel, NSOpenPanel, NSPasteboard,
-    NSPasteboardTypePNG, NSPasteboardTypeString, NSPasteboardTypeTIFF, NSPopUpButton, NSPrintOperation, NSRectFill,
-    NSRectFillUsingOperation, NSResponder, NSSavePanel, NSScreen, NSScrollView, NSStackView, NSStackViewGravity,
-    NSTextField, NSTextFieldDelegate, NSToolbar, NSToolbarDelegate, NSToolbarDisplayMode,
-    NSToolbarFlexibleSpaceItemIdentifier, NSToolbarItem, NSTrackingArea, NSTrackingAreaOptions,
-    NSUserInterfaceLayoutOrientation, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask, NSWindowToolbarStyle,
+    NSControlTextEditingDelegate, NSCursor, NSEvent, NSEventModifierFlags, NSEventType, NSFloatingWindowLevel,
+    NSGraphicsContext, NSGridCellPlacement, NSGridView, NSImage, NSImageScaling, NSImageView, NSModalResponseOK,
+    NSNormalWindowLevel, NSOpenPanel, NSPasteboard, NSPasteboardTypePNG, NSPasteboardTypeString, NSPasteboardTypeTIFF,
+    NSPopUpButton, NSPopover, NSPopoverBehavior, NSPrintOperation, NSRectFill, NSRectFillUsingOperation, NSResponder,
+    NSSavePanel, NSScreen, NSScrollView, NSSlider, NSStackView, NSStackViewGravity, NSTextField, NSTextFieldDelegate,
+    NSToolbar, NSToolbarDelegate, NSToolbarDisplayMode, NSToolbarFlexibleSpaceItemIdentifier, NSToolbarItem,
+    NSTrackingArea, NSTrackingAreaOptions, NSUserInterfaceLayoutOrientation, NSView, NSViewController, NSWindow,
+    NSWindowDelegate, NSWindowStyleMask, NSWindowToolbarStyle,
 };
 use objc2_core_foundation::CFRetained;
 use objc2_core_graphics::CGImage;
@@ -34,8 +35,9 @@ use objc2_foundation::{
 use objc2_uniform_type_identifiers::UTType;
 
 use crate::annotation::{self, Annotation, Color, Grip, Point, Size, Snap, Tool};
+use crate::backdrop::{self, Backdrop, Fill, Layout};
 use crate::capture::Shot;
-use crate::document::{self, Doc, History, PixelRect, State, render};
+use crate::document::{self, Doc, History, PixelRect, State, present};
 use crate::paint::{self, Mode};
 use crate::settings::{DefaultZoom, EscAction, Settings};
 use crate::{assets, keys, measure, output, overlay, pin, preview};
@@ -73,7 +75,7 @@ struct Button {
     action: Sel,
 }
 
-fn buttons() -> [Button; 15] {
+fn buttons() -> [Button; 16] {
     [
         Button { id: "undo", label: "Undo", icon: assets::UNDO, action: sel!(undoEdit:) },
         Button { id: "redo", label: "Redo", icon: assets::REDO, action: sel!(redoEdit:) },
@@ -82,6 +84,7 @@ fn buttons() -> [Button; 15] {
         Button { id: "resize", label: "Resize", icon: assets::SCALING, action: sel!(resize:) },
         Button { id: "rasterize", label: "Rasterize", icon: assets::LAYERS, action: sel!(rasterize:) },
         Button { id: "addCapture", label: "Add Capture", icon: assets::IMAGE_PLUS, action: sel!(addCapture:) },
+        Button { id: "backdrop", label: "Backdrop", icon: assets::WALLPAPER, action: sel!(showBackdrop:) },
         Button { id: "zoomOut", label: "Zoom Out", icon: assets::ZOOM_OUT, action: sel!(zoomOut:) },
         Button { id: "zoomFit", label: "Fit", icon: assets::MAXIMIZE, action: sel!(zoomToFit:) },
         Button { id: "zoomIn", label: "Zoom In", icon: assets::ZOOM_IN, action: sel!(zoomIn:) },
@@ -94,7 +97,7 @@ fn buttons() -> [Button; 15] {
 }
 
 /// Порядок кнопок: группы разделены гибким пробелом.
-const TOOLBAR_LAYOUT: [&str; 23] = [
+const TOOLBAR_LAYOUT: [&str; 24] = [
     "undo",
     "redo",
     "",
@@ -107,6 +110,7 @@ const TOOLBAR_LAYOUT: [&str; 23] = [
     "style",
     "rasterize",
     "addCapture",
+    "backdrop",
     "",
     "zoomOut",
     "zoomFit",
@@ -165,6 +169,20 @@ enum Drag {
     },
 }
 
+/// Элементы окна подложки.
+struct BackdropControls {
+    enabled: Retained<NSButton>,
+    kind: Retained<NSPopUpButton>,
+    color: Retained<NSColorWell>,
+    padding: Retained<NSSlider>,
+    shadow: Retained<NSSlider>,
+    radius: Retained<NSSlider>,
+    outer_radius: Retained<NSSlider>,
+    inset: Retained<NSSlider>,
+    aspect: Retained<NSPopUpButton>,
+    auto_crop: Retained<NSButton>,
+}
+
 struct EditorIvars {
     /// Основы документа и добавленные снимки. 0 - исходный снимок, основы появляются при впечатывании аннотаций.
     images: RefCell<Vec<CFRetained<CGImage>>>,
@@ -182,6 +200,12 @@ struct EditorIvars {
     pick_format: Cell<usize>,
     /// Цвет под пипеткой и где он, в пикселях основы.
     hover: Cell<Option<(Point, [u8; 3])>>,
+    /// Где снимок лежит на холсте с подложкой. Без подложки - во весь холст.
+    layout: Cell<Layout>,
+    /// Последние настройки подложки, чтобы включение возвращало их.
+    last_backdrop: Cell<Backdrop>,
+    backdrop_popover: OnceCell<Retained<NSPopover>>,
+    backdrop_controls: OnceCell<BackdropControls>,
     selected: Cell<Option<usize>>,
     drag: RefCell<Option<Drag>>,
     /// Аннотация, которой нет на картинке холста, пока её тянут.
@@ -274,6 +298,26 @@ define_class!(
         #[unsafe(method(addCapture:))]
         fn add_capture_action(&self, _sender: Option<&AnyObject>) {
             self.add_capture();
+        }
+
+        #[unsafe(method(showBackdrop:))]
+        fn show_backdrop_action(&self, sender: &NSToolbarItem) {
+            self.show_backdrop(sender);
+        }
+
+        #[unsafe(method(backdropChanged:))]
+        fn backdrop_changed_action(&self, sender: &AnyObject) {
+            self.backdrop_changed(sender);
+        }
+
+        #[unsafe(method(randomizeBackdrop:))]
+        fn randomize_backdrop(&self, _sender: Option<&AnyObject>) {
+            self.change_fill(|fill| fill.randomized(backdrop::seed()));
+        }
+
+        #[unsafe(method(reverseBackdrop:))]
+        fn reverse_backdrop(&self, _sender: Option<&AnyObject>) {
+            self.change_fill(Fill::reversed);
         }
 
         #[unsafe(method(exportGif:))]
@@ -465,7 +509,7 @@ impl Editor {
     }
 
     /// Применяет новый документ: запоминает его в истории и перерисовывает холст.
-    /// Под новый размер холст подгоняется, только если изменились обрезка или размер.
+    /// Под новый размер холст подгоняется, если изменились обрезка, размер или подложка.
     fn apply(&self, doc: Doc) {
         let refit = doc.state != self.state();
         self.ivars().history.borrow_mut().push(doc);
@@ -490,6 +534,7 @@ impl Editor {
         self.ivars().hidden.set(None);
         self.ivars().selected.set(None);
         self.sync_controls();
+        self.sync_backdrop_controls();
         self.refresh(self.state() != before);
     }
 
@@ -507,11 +552,12 @@ impl Editor {
     fn crop_to(&self, selection: NSRect) {
         let doc = self.doc();
         let size = self.canvas().frame().size;
-        let factor = doc.state.width / size.width;
+        let layout = self.ivars().layout.get();
+        let factor = layout.width / size.width;
         let rect = PixelRect::new(
-            selection.origin.x * factor,
+            selection.origin.x * factor - layout.content.0,
             // У холста начало внизу, у пикселей снимка - вверху.
-            (size.height - selection.origin.y - selection.size.height) * factor,
+            (size.height - selection.origin.y - selection.size.height) * factor - layout.content.1,
             selection.size.width * factor,
             selection.size.height * factor,
         );
@@ -543,19 +589,21 @@ impl Editor {
     /// Перерисовывает результат и подгоняет под него холст.
     fn refresh(&self, refit: bool) {
         let doc = self.doc();
-        let rendered = render(&self.ivars().images.borrow(), &doc, self.ivars().hidden.get(), self.ivars().scale);
-        let Some(image) = rendered else {
+        let presented = present(&self.ivars().images.borrow(), &doc, self.ivars().hidden.get(), self.ivars().scale);
+        let Some((image, layout)) = presented else {
             return eprintln!("kadro: failed to render the edited image");
         };
-        let size = self.points(doc.state.width, doc.state.height);
+        let before = self.ivars().layout.replace(layout);
+        let resized = (before.width, before.height) != (layout.width, layout.height);
+        let size = self.points(layout.width, layout.height);
         let ns_image = NSImage::initWithCGImage_size(NSImage::alloc(), &image, size);
         *self.ivars().rendered.borrow_mut() = image;
         let image_view = self.ivars().image_view.get().expect("built with the window");
         image_view.setImage(Some(&ns_image));
         self.canvas().setFrameSize(size);
-        self.window().setSubtitle(&NSString::from_str(&format!("{} × {}", doc.state.width, doc.state.height)));
+        self.window().setSubtitle(&NSString::from_str(&format!("{} × {}", layout.width, layout.height)));
         self.redraw_marks();
-        if refit {
+        if refit || resized {
             self.fit();
         }
     }
@@ -612,13 +660,18 @@ impl Editor {
     fn to_base(&self, p: NSPoint) -> Point {
         let state = self.state();
         let size = self.canvas().frame().size;
-        state.to_source(p.x * state.width / size.width, (size.height - p.y) * state.height / size.height)
+        let layout = self.ivars().layout.get();
+        let x = p.x * layout.width / size.width - layout.content.0;
+        let y = (size.height - p.y) * layout.height / size.height - layout.content.1;
+        state.to_source(x, y)
     }
 
     /// Пикселей основы на экранную точку при текущем масштабе.
     fn base_per_point(&self) -> f64 {
         let state = self.state();
-        state.crop.width / (self.canvas().frame().size.width * self.scroll().magnification())
+        let layout = self.ivars().layout.get();
+        let points_per_output = self.canvas().frame().size.width / layout.width;
+        state.crop.width / (state.width * points_per_output * self.scroll().magnification())
     }
 
     fn choose(&self, pointer: Pointer) {
@@ -837,9 +890,10 @@ impl Editor {
     /// Пиксель результата под точкой основы.
     fn output_pixel(&self, p: Point) -> (usize, usize) {
         let state = self.state();
-        let x = (p.x - state.crop.x) * state.width / state.crop.width;
-        let y = (p.y - state.crop.y) * state.height / state.crop.height;
-        ((x.max(0.0) as usize).min(state.width as usize - 1), (y.max(0.0) as usize).min(state.height as usize - 1))
+        let layout = self.ivars().layout.get();
+        let x = (p.x - state.crop.x) * state.width / state.crop.width + layout.content.0;
+        let y = (p.y - state.crop.y) * state.height / state.crop.height + layout.content.1;
+        ((x.max(0.0) as usize).min(layout.width as usize - 1), (y.max(0.0) as usize).min(layout.height as usize - 1))
     }
 
     /// Пипетка над холстом: запоминает цвет под мышью для рамки рядом с ней.
@@ -907,8 +961,9 @@ impl Editor {
     /// GIF из двух кадров по секунде: с аннотациями и без них.
     fn export_gif(&self) {
         let doc = self.doc();
-        let plain = render(&self.ivars().images.borrow(), &Doc { annotations: Vec::new(), ..doc.clone() }, None, 1.0);
-        let (Some(plain), false) = (plain, doc.annotations.is_empty()) else { return NSBeep() };
+        let plain = Doc { annotations: Vec::new(), ..doc.clone() };
+        let plain = present(&self.ivars().images.borrow(), &plain, None, self.ivars().scale);
+        let (Some((plain, _)), false) = (plain, doc.annotations.is_empty()) else { return NSBeep() };
         let panel = NSSavePanel::savePanel(self.mtm());
         panel.setNameFieldStringValue(&NSString::from_str(&format!("{}.gif", self.window().title())));
         panel.setCanCreateDirectories(true);
@@ -926,6 +981,169 @@ impl Editor {
             alert.setInformativeText(&NSString::from_str(&err.to_string()));
             alert.runModal();
         }
+    }
+
+    /// Показывает настройки подложки под кнопкой панели инструментов.
+    fn show_backdrop(&self, item: &NSToolbarItem) {
+        let popover = self.ivars().backdrop_popover.get_or_init(|| self.backdrop_popover());
+        self.sync_backdrop_controls();
+        popover.showRelativeToToolbarItem(item);
+    }
+
+    fn backdrop_popover(&self) -> Retained<NSPopover> {
+        let mtm = self.mtm();
+        let target: &AnyObject = self.as_ref();
+        let changed = Some(sel!(backdropChanged:));
+        let slider = |max: f64| {
+            let slider = unsafe {
+                NSSlider::sliderWithValue_minValue_maxValue_target_action(0.0, 0.0, max, Some(target), changed, mtm)
+            };
+            slider.setContinuous(true);
+            slider.widthAnchor().constraintEqualToConstant(180.0).setActive(true);
+            slider
+        };
+        let checkbox = |title: &str| unsafe {
+            NSButton::checkboxWithTitle_target_action(&NSString::from_str(title), Some(target), changed, mtm)
+        };
+        let button = |title: &str, action: Sel| unsafe {
+            NSButton::buttonWithTitle_target_action(&NSString::from_str(title), Some(target), Some(action), mtm)
+        };
+        let kind = popup(mtm, self, 120.0, &backdrop::KINDS, sel!(backdropChanged:));
+        let aspects: Vec<_> = backdrop::ASPECTS.iter().map(|(title, _)| *title).collect();
+        let aspect = popup(mtm, self, 120.0, &aspects, sel!(backdropChanged:));
+        let color =
+            NSColorWell::initWithFrame(NSColorWell::alloc(mtm), NSRect::new(NSPoint::ZERO, NSSize::new(38.0, 24.0)));
+        color.setColorWellStyle(NSColorWellStyle::Minimal);
+        unsafe {
+            color.setTarget(Some(target));
+            color.setAction(changed);
+        }
+        let controls = BackdropControls {
+            enabled: checkbox("Show backdrop"),
+            kind,
+            color,
+            padding: slider(160.0),
+            shadow: slider(1.0),
+            radius: slider(40.0),
+            outer_radius: slider(40.0),
+            inset: slider(80.0),
+            aspect,
+            auto_crop: checkbox("Trim plain edges"),
+        };
+        let fill_row = NSStackView::stackViewWithViews(
+            &NSArray::from_retained_slice(&[
+                view(&controls.kind),
+                view(&controls.color),
+                view(&button("Randomize", sel!(randomizeBackdrop:))),
+                view(&button("Reverse", sel!(reverseBackdrop:))),
+            ]),
+            mtm,
+        );
+        let label = |text: &str| view(&NSTextField::labelWithString(&NSString::from_str(text), mtm));
+        let empty = || view(&NSView::new(mtm));
+        let rows = [
+            [empty(), view(&controls.enabled)],
+            [label("Background"), view(&fill_row)],
+            [label("Padding"), view(&controls.padding)],
+            [label("Shadow"), view(&controls.shadow)],
+            [label("Corners"), view(&controls.radius)],
+            [label("Outer corners"), view(&controls.outer_radius)],
+            [label("Inset"), view(&controls.inset)],
+            [label("Aspect ratio"), view(&controls.aspect)],
+            [empty(), view(&controls.auto_crop)],
+        ];
+        let rows: Vec<_> = rows.iter().map(|row| NSArray::from_retained_slice(row)).collect();
+        let grid = NSGridView::gridViewWithViews(&NSArray::from_retained_slice(&rows), mtm);
+        grid.setRowSpacing(10.0);
+        grid.setColumnSpacing(10.0);
+        grid.setYPlacement(NSGridCellPlacement::Center);
+        grid.columnAtIndex(0).setXPlacement(NSGridCellPlacement::Trailing);
+        grid.setFrameSize(grid.fittingSize());
+        let container = NSView::initWithFrame(
+            NSView::alloc(mtm),
+            NSRect::new(NSPoint::ZERO, NSSize::new(grid.fittingSize().width + 32.0, grid.fittingSize().height + 32.0)),
+        );
+        grid.setFrameOrigin(NSPoint::new(16.0, 16.0));
+        container.addSubview(&grid);
+        let _ = self.ivars().backdrop_controls.set(controls);
+
+        let controller = NSViewController::new(mtm);
+        controller.setView(&container);
+        let popover = NSPopover::new(mtm);
+        popover.setContentViewController(Some(&controller));
+        popover.setBehavior(NSPopoverBehavior::Transient);
+        popover
+    }
+
+    /// Показывает в окне подложки её текущие настройки или последние, если она выключена.
+    fn sync_backdrop_controls(&self) {
+        let Some(controls) = self.ivars().backdrop_controls.get() else { return };
+        let current = self.doc().backdrop;
+        let backdrop = current.unwrap_or(self.ivars().last_backdrop.get());
+        let on = |flag: bool| if flag { NSControlStateValueOn } else { NSControlStateValueOff };
+        controls.enabled.setState(on(current.is_some()));
+        controls.kind.selectItemAtIndex(backdrop.fill.kind() as isize);
+        if let Fill::Solid(c) = backdrop.fill {
+            controls.color.setColor(&NSColor::colorWithSRGBRed_green_blue_alpha(c.red, c.green, c.blue, 1.0));
+        }
+        controls.color.setEnabled(backdrop.fill.kind() == Fill::Solid(Color::RED).kind());
+        controls.padding.setDoubleValue(backdrop.padding);
+        controls.shadow.setDoubleValue(backdrop.shadow);
+        controls.radius.setDoubleValue(backdrop.radius);
+        controls.outer_radius.setDoubleValue(backdrop.outer_radius);
+        controls.inset.setDoubleValue(backdrop.inset);
+        controls.aspect.selectItemAtIndex(backdrop.aspect as isize);
+        controls.auto_crop.setState(on(backdrop.auto_crop));
+    }
+
+    /// Собирает подложку из элементов окна. Любая правка, кроме самого флажка, включает подложку.
+    fn backdrop_changed(&self, sender: &AnyObject) {
+        let Some(controls) = self.ivars().backdrop_controls.get() else { return };
+        let toggled = std::ptr::eq(sender, controls.enabled.as_ref() as &AnyObject);
+        let previous = self.doc().backdrop.unwrap_or(self.ivars().last_backdrop.get());
+        let kind = controls.kind.indexOfSelectedItem().max(0) as usize;
+        let white = Color { red: 1.0, green: 1.0, blue: 1.0, alpha: 1.0 };
+        let solid = color_of(&controls.color.color()).unwrap_or(white);
+        let fill = match previous.fill {
+            Fill::Solid(_) if kind == previous.fill.kind() => Fill::Solid(solid),
+            fill if kind == fill.kind() => fill,
+            _ => Fill::of_kind(kind, solid),
+        };
+        let backdrop = Backdrop {
+            fill,
+            padding: controls.padding.doubleValue().round(),
+            shadow: (controls.shadow.doubleValue() * 100.0).round() / 100.0,
+            radius: controls.radius.doubleValue().round(),
+            outer_radius: controls.outer_radius.doubleValue().round(),
+            inset: controls.inset.doubleValue().round(),
+            aspect: controls.aspect.indexOfSelectedItem().max(0) as usize,
+            auto_crop: controls.auto_crop.state() == NSControlStateValueOn,
+        };
+        let enabled = !toggled || controls.enabled.state() == NSControlStateValueOn;
+        self.set_backdrop(enabled.then_some(backdrop));
+    }
+
+    fn change_fill(&self, change: impl FnOnce(Fill) -> Fill) {
+        let backdrop = self.doc().backdrop.unwrap_or(self.ivars().last_backdrop.get());
+        self.set_backdrop(Some(Backdrop { fill: change(backdrop.fill), ..backdrop }));
+    }
+
+    /// Ставит подложку. Пока тянут ползунок, правка заменяет предыдущую, а не добавляет шаг отмены.
+    fn set_backdrop(&self, backdrop: Option<Backdrop>) {
+        if let Some(backdrop) = backdrop {
+            self.ivars().last_backdrop.set(backdrop);
+        }
+        let doc = Doc { backdrop, ..self.doc() };
+        let dragging = NSApplication::sharedApplication(self.mtm())
+            .currentEvent()
+            .is_some_and(|event| event.r#type() == NSEventType::LeftMouseDragged);
+        if dragging {
+            self.ivars().history.borrow_mut().amend(doc);
+            self.refresh(false);
+        } else {
+            self.apply(doc);
+        }
+        self.sync_backdrop_controls();
     }
 
     fn delete_selected(&self) -> bool {
@@ -992,9 +1210,13 @@ impl Editor {
     fn draw_marks(&self, size: NSSize) {
         let history = self.ivars().history.borrow();
         let doc = history.current();
-        let crop = doc.state.crop;
+        let (crop, state) = (doc.state.crop, doc.state);
+        let layout = self.ivars().layout.get();
+        // Точки слоя, пиксели холста с подложкой, пиксели снимка и пиксели основы.
         let transform = NSAffineTransform::transform();
-        transform.scaleXBy_yBy(size.width / crop.width, size.height / crop.height);
+        transform.scaleXBy_yBy(size.width / layout.width, size.height / layout.height);
+        transform.translateXBy_yBy(layout.content.0, layout.content.1);
+        transform.scaleXBy_yBy(state.width / crop.width, state.height / crop.height);
         transform.translateXBy_yBy(-crop.x, -crop.y);
         NSGraphicsContext::saveGraphicsState_class();
         transform.concat();
@@ -1534,6 +1756,7 @@ pub fn open(mtm: MainThreadMarker, image: CFRetained<CGImage>, scale: f64, shot:
             state: State::original(width, height),
             annotations: Vec::new(),
             base: 0,
+            backdrop: None,
         })),
         pointer: Cell::new(Pointer::Select),
         color: Cell::new(Color::RED),
@@ -1541,6 +1764,10 @@ pub fn open(mtm: MainThreadMarker, image: CFRetained<CGImage>, scale: f64, shot:
         styles: Cell::new([0; Tool::ALL.len()]),
         pick_format: Cell::new(0),
         hover: Cell::new(None),
+        layout: Cell::new(Layout { width, height, card: (0.0, 0.0, width, height), content: (0.0, 0.0) }),
+        last_backdrop: Cell::new(Backdrop::default()),
+        backdrop_popover: OnceCell::new(),
+        backdrop_controls: OnceCell::new(),
         selected: Cell::new(None),
         drag: RefCell::new(None),
         hidden: Cell::new(None),

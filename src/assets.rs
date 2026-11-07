@@ -63,6 +63,7 @@ pub const RULER: &[u8] = include_bytes!("../assets/icons/ruler.svg");
 pub const PIPETTE: &[u8] = include_bytes!("../assets/icons/pipette.svg");
 pub const IMAGE_PLUS: &[u8] = include_bytes!("../assets/icons/image-plus.svg");
 pub const FILM: &[u8] = include_bytes!("../assets/icons/film.svg");
+pub const WALLPAPER: &[u8] = include_bytes!("../assets/icons/wallpaper.svg");
 
 thread_local! {
     static FONT: OnceCell<Option<Retained<NSFontDescriptor>>> = const { OnceCell::new() };

@@ -20,7 +20,7 @@ use objc2_screen_capture_kit::{
     SCContentFilter, SCDisplay, SCScreenshotManager, SCShareableContent, SCStreamConfiguration,
 };
 
-use crate::settings::{self, Cursor, Settings};
+use crate::settings::{self, Cursor, Settings, WindowBackground};
 use crate::{geometry, output, overlay};
 
 const SCREEN_RECORDING_SETTINGS_URL: &str =
@@ -189,7 +189,8 @@ pub fn capture_window(window_id: CGWindowID) {
         let config = unsafe { SCStreamConfiguration::new() };
         set_output_size(&config, frame.size, scale);
         unsafe {
-            config.setIgnoreShadowsSingleWindow(true);
+            // Тень нужна, если за окном будет фон или прозрачность.
+            config.setIgnoreShadowsSingleWindow(Settings::load().window_background == WindowBackground::Clean);
             config.setShowsCursor(shows_cursor(Kind::Window));
         }
         let app = unsafe { window.owningApplication() }
