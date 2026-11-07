@@ -297,6 +297,7 @@ Features:
 - **Settings window keeps one width.** All tabs share the width of the widest one, and the window can be widened up to 1000 points, with text fields growing along. Height follows the tab.
 - **About tab** in Settings with the version, author, license and a link to the repository.
 - **Shorter menu bar menu.** Everyday captures, Recognize Text, Library and Settings stay on top, the rest moves to a More submenu.
+- **New icon.** A piece taken out of a square screen and moved aside, the capture of an area. Light body and orange piece on a graphite tile for the app, one-colour template in the menu bar.
 
 Done when: every item in this section is fixed and checked by hand.
 

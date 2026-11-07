@@ -1,4 +1,4 @@
-// Рисует иконку приложения из SVG Lucide: белый символ на тёмном скруглённом квадрате.
+// Рисует иконку приложения: цветной знак из SVG на тёмном скруглённом квадрате.
 // Использование: swift scripts/icon.swift <symbol.svg> <out.iconset>
 import AppKit
 
@@ -24,14 +24,8 @@ func render(_ pixels: Int) -> Data {
     NSGradient(starting: NSColor(white: 0.24, alpha: 1), ending: NSColor(white: 0.10, alpha: 1))!
         .draw(in: NSBezierPath(roundedRect: body, xRadius: radius, yRadius: radius), angle: -90)
 
-    let glyph = body.insetBy(dx: body.width * 0.22, dy: body.height * 0.22)
-    let tinted = NSImage(size: glyph.size, flipped: false) { rect in
-        symbol.draw(in: rect)
-        NSColor.white.set()
-        rect.fill(using: .sourceAtop)
-        return true
-    }
-    tinted.draw(in: glyph)
+    // У знака в SVG поля по 1/8, так он занимает 60% плитки.
+    symbol.draw(in: body.insetBy(dx: body.width * 0.1, dy: body.height * 0.1))
     NSGraphicsContext.restoreGraphicsState()
     return rep.representation(using: .png, properties: [:])!
 }
