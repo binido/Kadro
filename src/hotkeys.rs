@@ -186,11 +186,12 @@ pub enum Action {
     ScrollCapture,
     UploadLast,
     OpenLibrary,
+    ShowMenu,
 }
 
 impl Action {
     /// Порядок пунктов в меню и строк в настройках.
-    pub const ALL: [Action; 12] = [
+    pub const ALL: [Action; 13] = [
         Action::Region,
         Action::RepeatRegion,
         Action::Screen,
@@ -203,6 +204,7 @@ impl Action {
         Action::UploadLast,
         Action::OpenLibrary,
         Action::RecognizeText,
+        Action::ShowMenu,
     ];
 
     pub fn title(self) -> &'static str {
@@ -219,6 +221,7 @@ impl Action {
             Action::ScrollCapture => "Scrolling Capture",
             Action::UploadLast => "Upload Last Screenshot",
             Action::OpenLibrary => "Library",
+            Action::ShowMenu => "Show Kadro Menu",
         }
     }
 
@@ -238,6 +241,7 @@ impl Action {
             Action::EditLast => editor::open_last(mtm),
             Action::UploadLast => upload::upload_last(mtm),
             Action::OpenLibrary => browser::show(mtm),
+            Action::ShowMenu => crate::show_menu(mtm),
             Action::ScrollCapture => {
                 output::route_next(output::Route::Scroll);
                 if !overlay::select(mtm, overlay::Mode::Region) {
@@ -272,6 +276,7 @@ impl Action {
             Action::ScrollCapture => "shortcutScrollCapture",
             Action::UploadLast => "shortcutUploadLast",
             Action::OpenLibrary => "shortcutLibrary",
+            Action::ShowMenu => "shortcutShowMenu",
         }
     }
 
@@ -289,7 +294,8 @@ impl Action {
             | Action::RecognizeText
             | Action::ScrollCapture
             | Action::UploadLast
-            | Action::OpenLibrary => {
+            | Action::OpenLibrary
+            | Action::ShowMenu => {
                 return None;
             }
         };

@@ -23,9 +23,10 @@ use objc2_service_management::{SMAppService, SMAppServiceStatus};
 use crate::hotkeys::{self, Action, Shortcut};
 use crate::settings::{
     self, AfterCapture, Choice, Confirmation, Cursor, DEFAULT_FILE_NAME_TEMPLATE, DefaultZoom, EscAction, Format,
-    LibraryLimit, LinkExpiry, LinkKind, PreviewHiding, ScrollLimit, ScrollSpeed, Settings, WindowBackground,
+    LibraryLimit, LinkExpiry, LinkKind, LinkPolicy, PreviewHiding, ScrollLimit, ScrollSpeed, Settings,
+    WindowBackground,
 };
-use crate::{assets, keys, library, output, recognize, upload};
+use crate::{assets, keys, library, output, recognize, updates, upload};
 
 const MARGIN: f64 = 24.0;
 const FIELD_WIDTH: f64 = 240.0;
@@ -180,6 +181,27 @@ define_class!(
                     });
                 });
             });
+        }
+
+        #[unsafe(method(toggleHideIcon:))]
+        fn toggle_hide_icon(&self, sender: &NSButton) {
+            settings::set_flag(settings::HIDE_ICON, is_on(sender));
+            crate::set_icon_visible(!is_on(sender));
+        }
+
+        #[unsafe(method(changeLinkPolicy:))]
+        fn change_link_policy(&self, sender: &NSButton) {
+            store_choice::<LinkPolicy>(sender);
+        }
+
+        #[unsafe(method(toggleCheckUpdates:))]
+        fn toggle_check_updates(&self, sender: &NSButton) {
+            settings::set_flag(settings::CHECK_UPDATES, is_on(sender));
+        }
+
+        #[unsafe(method(checkUpdatesNow:))]
+        fn check_updates_now(&self, _sender: &NSButton) {
+            updates::check(true);
         }
 
         #[unsafe(method(toggleLibrary:))]
@@ -522,6 +544,20 @@ fn general_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSVie
     let downscale =
         checkbox(mtm, "Downscale to 1× when saving", current.downscale_retina, controller, sel!(toggleDownscale:));
     let login = checkbox(mtm, "Launch at login", launches_at_login(), controller, sel!(toggleLaunchAtLogin:));
+    let hide_icon = checkbox(mtm, "Hide the menu bar icon", current.hide_icon, controller, sel!(toggleHideIcon:));
+    let hide_hint = label(mtm, "Open Kadro again from Applications to get back to Settings.");
+    hide_hint.setTextColor(Some(&NSColor::secondaryLabelColor()));
+    let links = radios(mtm, current.links, controller, sel!(changeLinkPolicy:));
+    let updates_on =
+        checkbox(mtm, "Check for updates once a day", current.check_updates, controller, sel!(toggleCheckUpdates:));
+    let check_now = unsafe {
+        NSButton::buttonWithTitle_target_action(
+            ns_string!("Check Now"),
+            Some(controller),
+            Some(sel!(checkUpdatesNow:)),
+            mtm,
+        )
+    };
     let language = recognition_languages(mtm, current.recognition_language.as_deref(), controller);
     let single_line = checkbox(mtm, "Join lines into one", current.single_line, controller, sel!(toggleSingleLine:));
     let library_on =
@@ -560,6 +596,10 @@ fn general_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSVie
             Row::Field("", view(&scroll_reverse)),
             Row::Separator,
             Row::Field("Autostart", view(&login)),
+            Row::Field("Menu bar", view(&hide_icon)),
+            Row::Field("", view(&hide_hint)),
+            Row::Field("kadro:// links", inline(mtm, &links)),
+            Row::Field("Updates", inline(mtm, &[view(&updates_on), view(&check_now)])),
             Row::Separator,
             Row::Field("Show after capture", inline(mtm, &after_capture)),
             Row::Field("After screenshot", inline(mtm, &[view(&copy), view(&save)])),

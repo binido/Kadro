@@ -201,7 +201,7 @@ impl Storage {
         let (url, headers) = self.request("PUT", &key, b"Kadro", Some("text/plain"), unix_now());
         send("PUT", &url, &headers, b"Kadro")?;
         let (url, headers) = self.request("DELETE", &key, b"", None, unix_now());
-        send("DELETE", &url, &headers, b"")
+        send("DELETE", &url, &headers, b"").map(drop)
     }
 }
 
@@ -209,9 +209,9 @@ fn unix_now() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
-/// Отправляет запрос и ждёт ответа. Вызывается только вне главного потока.
-fn send(method: &str, url: &str, headers: &[(String, String)], body: &[u8]) -> Result<(), String> {
-    let url = NSURL::URLWithString(&NSString::from_str(url)).ok_or("the storage address is not a valid URL")?;
+/// Отправляет запрос и ждёт ответа. Возвращает тело ответа. Вызывается только вне главного потока.
+pub fn send(method: &str, url: &str, headers: &[(String, String)], body: &[u8]) -> Result<Vec<u8>, String> {
+    let url = NSURL::URLWithString(&NSString::from_str(url)).ok_or("the address is not a valid URL")?;
     let request = NSMutableURLRequest::requestWithURL(&url);
     request.setHTTPMethod(&NSString::from_str(method));
     for (name, value) in headers {
@@ -229,7 +229,7 @@ fn send(method: &str, url: &str, headers: &[(String, String)], body: &[u8]) -> R
                     .and_then(|r| r.downcast_ref::<NSHTTPURLResponse>())
                     .map_or(0, NSHTTPURLResponse::statusCode);
                 let body = unsafe { data.as_ref() }.map(NSData::to_vec).unwrap_or_default();
-                if (200..300).contains(&status) { Ok(()) } else { Err(error_message(status, &body)) }
+                if (200..300).contains(&status) { Ok(body) } else { Err(error_message(status, &body)) }
             }
         };
         let _ = sender.send(result);

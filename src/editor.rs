@@ -29,7 +29,7 @@ use objc2_core_foundation::CFRetained;
 use objc2_core_graphics::CGImage;
 use objc2_foundation::{
     NSAffineTransform, NSArray, NSCopying, NSEdgeInsets, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRect,
-    NSSize, NSString, NSTimer, NSURL, ns_string,
+    NSSize, NSString, NSTimer, ns_string,
 };
 use objc2_uniform_type_identifiers::UTType;
 
@@ -1980,14 +1980,5 @@ pub fn open_clipboard(mtm: MainThreadMarker) {
     match decoded {
         Some((image, scale)) => open(mtm, image, scale, None, "Clipboard"),
         None => NSBeep(),
-    }
-}
-
-/// Открывает файлы, которые Finder передал Kadro.
-pub fn open_urls(mtm: MainThreadMarker, urls: &NSArray<NSURL>) {
-    for url in urls {
-        if let Some(path) = url.path() {
-            open_file(mtm, Path::new(&path.to_string()));
-        }
     }
 }
