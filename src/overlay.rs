@@ -22,7 +22,7 @@ use objc2_core_graphics::{
 use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSObject, NSPoint, NSRect, NSSize, NSString, ns_string};
 
 use crate::bridge::{self, number};
-use crate::{assets, capture, geometry, keys, output};
+use crate::{assets, capture, geometry, keys, output, scroll};
 
 /// Сторона лупы в точках и сколько пикселей снимка в ней видно по каждой оси.
 const LOUPE_SIZE: f64 = 120.0;
@@ -189,7 +189,11 @@ define_class!(
                     );
                     let app = APP.with_borrow(Clone::clone);
                     close();
-                    capture::capture_region(self.ivars().display.get(), flipped, app);
+                    if output::take_scroll_route() {
+                        scroll::start(self.ivars().display.get(), flipped, app);
+                    } else {
+                        capture::capture_region(self.ivars().display.get(), flipped, app);
+                    }
                 }
                 _ => {
                     self.ivars().selection.set(None);

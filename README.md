@@ -10,6 +10,7 @@ Capture:
 - The last selected region again, without selecting.
 - The entire screen under the pointer, right away or after a 3-second countdown in the menu bar.
 - A window picked with the pointer, or the active window straight away. Behind a captured window: nothing (no shadow), transparency with its shadow, the wallpaper of its screen, or a chosen colour.
+- Content taller than the screen with Scrolling Capture: select an area, then let Kadro scroll it down or up, or scroll it yourself. Frames are stitched into one image, fixed headers and footers appear once. It stops at the end, at the height limit, or on Return; Esc cancels. Automatic scrolling needs Accessibility access, scrolling yourself does not.
 - Multiple displays and Retina displays, each at its own scale.
 
 Output:
@@ -69,6 +70,7 @@ A compact native preferences window uses Space Grotesk typography and Lucide ico
 - Cursor in screenshots
 - What is behind captured windows: no shadow, transparent, wallpaper, colour
 - Text recognition language, joining recognized lines into one
+- Scrolling capture height limit, scroll speed, reversed direction
 - Launch at login
 - Show after capture: preview, editor, nothing
 - After screenshot: copy, save
@@ -87,7 +89,7 @@ A compact native preferences window uses Space Grotesk typography and Lucide ico
 - Capture region, repeat last region
 - Capture full screen, now or in 3 seconds
 - Capture window, capture active window
-- Pin last screenshot, edit last screenshot, recognize text
+- Scrolling capture, pin last screenshot, edit last screenshot, recognize text
 - Every shortcut can be recorded or cleared, with conflict detection against Kadro, macOS and other apps
 
 ## Technical constraints

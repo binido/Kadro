@@ -52,6 +52,8 @@ pub enum Route {
     Editor,
     /// Только в распознавание текста.
     Text,
+    /// Выделенная область прокручивается и склеивается, а не снимается сразу.
+    Scroll,
 }
 
 /// Маршрут следующего снимка. Ставится на главном потоке, читается в потоке захвата.
@@ -67,10 +69,16 @@ pub fn cancel_route() {
     route_next(Route::Normal);
 }
 
+/// Забирает маршрут прокрутки, если выделение было для неё. Другие маршруты остаются на месте.
+pub fn take_scroll_route() -> bool {
+    ROUTE.compare_exchange(Route::Scroll as u8, Route::Normal as u8, Ordering::SeqCst, Ordering::SeqCst).is_ok()
+}
+
 fn take_route() -> Route {
     match ROUTE.swap(Route::Normal as u8, Ordering::SeqCst) {
         1 => Route::Editor,
         2 => Route::Text,
+        3 => Route::Scroll,
         _ => Route::Normal,
     }
 }
@@ -84,7 +92,7 @@ pub fn deliver(image: &CGImage, scale: f64, shot: &Shot) {
             return DispatchQueue::main().exec_async(move || editor::place_capture(image, scale));
         }
         Route::Text => return recognize::recognize_and_show(retain(image)),
-        Route::Normal => {}
+        Route::Normal | Route::Scroll => {}
     }
     let settings = Settings::load();
     let background = settings.window_background;

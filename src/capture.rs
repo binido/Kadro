@@ -258,7 +258,7 @@ fn capture(pick: impl Fn(&SCDisplay) -> bool + 'static, region: Option<CGRect>, 
 }
 
 /// Фильтр дисплея без окон самого Kadro: оверлей не попадает в снимок, даже если ещё не скрылся.
-fn display_filter(content: &SCShareableContent, display: &SCDisplay) -> Retained<SCContentFilter> {
+pub fn display_filter(content: &SCShareableContent, display: &SCDisplay) -> Retained<SCContentFilter> {
     let own_pid = own_pid();
     let own: Vec<_> =
         unsafe { content.applications() }.iter().filter(|app| unsafe { app.processID() } == own_pid).collect();
@@ -273,7 +273,7 @@ fn display_filter(content: &SCShareableContent, display: &SCDisplay) -> Retained
 }
 
 /// Размер снимка в пикселях: размер в точках, умноженный на плотность дисплея.
-fn set_output_size(config: &SCStreamConfiguration, size: CGSize, scale: f64) {
+pub fn set_output_size(config: &SCStreamConfiguration, size: CGSize, scale: f64) {
     unsafe {
         config.setWidth(pixels(size.width, scale));
         config.setHeight(pixels(size.height, scale));
@@ -297,7 +297,7 @@ fn shows_cursor(kind: Kind) -> bool {
     }
 }
 
-fn with_content(f: impl Fn(&SCShareableContent) + 'static) {
+pub fn with_content(f: impl Fn(&SCShareableContent) + 'static) {
     let handler = RcBlock::new(move |content: *mut SCShareableContent, error: *mut NSError| {
         match unsafe { content.as_ref() } {
             Some(content) => f(content),
@@ -347,7 +347,7 @@ fn decode_area(text: &str) -> Option<(CGDirectDisplayID, CGRect)> {
     Some((display, rect))
 }
 
-fn report(error: *mut NSError) {
+pub fn report(error: *mut NSError) {
     match unsafe { error.as_ref() } {
         Some(error) => eprintln!("kadro: capture failed: {}", error.localizedDescription()),
         None => eprintln!("kadro: capture failed"),

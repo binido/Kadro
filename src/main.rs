@@ -20,7 +20,9 @@ mod pin;
 mod prefs;
 mod preview;
 mod recognize;
+mod scroll;
 mod settings;
+mod stitch;
 
 use std::cell::OnceCell;
 
@@ -184,6 +186,7 @@ fn action_icon(action: Action) -> &'static [u8] {
         Action::PinLast => assets::PIN,
         Action::EditLast => assets::SQUARE_PEN,
         Action::RecognizeText => assets::SCAN_TEXT,
+        Action::ScrollCapture => assets::SCROLL,
     }
 }
 
