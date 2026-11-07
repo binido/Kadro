@@ -67,6 +67,62 @@ pub fn recognize(image: &CGImage, language: Option<&str>) -> Found {
     Found { lines, codes }
 }
 
+/// Флаг командной строки: Kadro распознаёт перечисленные файлы, печатает итог и выходит.
+const CHILD_FLAG: &str = "--recognize";
+/// Разделитель строк и кодов в выводе отдельного процесса.
+const SEPARATOR: char = '\u{1e}';
+
+/// Распознаёт файлы в отдельном процессе Kadro. Vision после работы держит в процессе
+/// десятки мегабайт моделей, а отдельный процесс отдаёт их системе, когда выходит.
+/// Вызывается только вне главного потока. Для файла, который не прочитался, результат пустой.
+pub fn recognize_files(paths: &[std::path::PathBuf], language: Option<&str>) -> Vec<Found> {
+    let output = std::env::current_exe().and_then(|exe| {
+        std::process::Command::new(exe).arg(CHILD_FLAG).arg(language.unwrap_or("-")).args(paths).output()
+    });
+    let text = match output {
+        Ok(output) => String::from_utf8_lossy(&output.stdout).into_owned(),
+        Err(err) => {
+            eprintln!("kadro: failed to start recognition: {err}");
+            String::new()
+        }
+    };
+    let mut found: Vec<Found> = text.lines().map(parse_found).collect();
+    found.resize(paths.len(), Found::default());
+    found
+}
+
+/// Если Kadro запущен для распознавания, распознаёт файлы из аргументов, печатает
+/// по строке на файл и возвращает true. Иначе ничего не делает.
+pub fn run_child() -> bool {
+    let mut args = std::env::args().skip(1);
+    if args.next().as_deref() != Some(CHILD_FLAG) {
+        return false;
+    }
+    let language = args.next().filter(|l| l != "-");
+    for path in args {
+        let found = std::fs::read(&path)
+            .ok()
+            .and_then(|bytes| crate::output::decode(&bytes))
+            .map(|(image, _)| recognize(&image, language.as_deref()))
+            .unwrap_or_default();
+        println!("{}", format_found(&found));
+    }
+    true
+}
+
+/// Итог одной картинки в одну строку: строки текста, табуляция, содержимое кодов.
+fn format_found(found: &Found) -> String {
+    let clean = |text: &String| text.chars().map(|c| if c.is_control() { ' ' } else { c }).collect::<String>();
+    let join = |items: &[String]| items.iter().map(clean).collect::<Vec<_>>().join(&SEPARATOR.to_string());
+    format!("{}\t{}", join(&found.lines), join(&found.codes))
+}
+
+fn parse_found(line: &str) -> Found {
+    let (lines, codes) = line.split_once('\t').unwrap_or((line, ""));
+    let split = |text: &str| text.split(SEPARATOR).filter(|s| !s.is_empty()).map(String::from).collect();
+    Found { lines: split(lines), codes: split(codes) }
+}
+
 /// Языки, которые Vision умеет распознавать.
 pub fn languages() -> Vec<String> {
     let request = VNRecognizeTextRequest::new();
@@ -128,7 +184,16 @@ pub fn recognize_and_show(image: objc2_core_foundation::CFRetained<CGImage>) {
     let settings = Settings::load();
     let language = settings.recognition_language.clone();
     crate::output::in_background(move || {
-        let found = recognize(&image, language.as_deref());
+        let file = std::env::temp_dir().join("Kadro").join("recognize.png");
+        let written = std::fs::create_dir_all(file.parent().unwrap_or(&file))
+            .and_then(|()| crate::output::write_to(&file, &image, 1.0));
+        let found = match written {
+            Ok(()) => recognize_files(std::slice::from_ref(&file), language.as_deref()).pop().unwrap_or_default(),
+            Err(err) => {
+                eprintln!("kadro: failed to prepare an image for recognition: {err}");
+                Found::default()
+            }
+        };
         dispatch2::DispatchQueue::main().exec_async(move || {
             if let Some(mtm) = MainThreadMarker::new() {
                 show(mtm, &found, settings.single_line);
@@ -214,6 +279,16 @@ mod tests {
         let found = recognize(&fixture(include_bytes!("../tests/fixtures/qr.png")), None);
         assert_eq!(found.codes, ["https://github.com/binido/Kadro"]);
         assert_eq!(link(&found.codes[0]), Some("https://github.com/binido/Kadro"));
+    }
+
+    #[test]
+    fn child_output_round_trips_text_and_codes() {
+        let found =
+            Found { lines: vec!["Line one".into(), "tab\there".into()], codes: vec!["https://kadro.app".into()] };
+        let line = format_found(&found);
+        assert!(!line.contains('\n'));
+        assert_eq!(parse_found(&line), Found { lines: vec!["Line one".into(), "tab here".into()], codes: found.codes });
+        assert_eq!(parse_found("\t"), Found::default());
     }
 
     #[test]

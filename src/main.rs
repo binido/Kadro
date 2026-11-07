@@ -6,12 +6,14 @@ mod annotation;
 mod assets;
 mod backdrop;
 mod bridge;
+mod browser;
 mod capture;
 mod document;
 mod editor;
 mod geometry;
 mod hotkeys;
 mod keys;
+mod library;
 mod measure;
 mod output;
 mod overlay;
@@ -190,6 +192,7 @@ fn action_icon(action: Action) -> &'static [u8] {
         Action::RecognizeText => assets::SCAN_TEXT,
         Action::ScrollCapture => assets::SCROLL,
         Action::UploadLast => assets::CLOUD_UPLOAD,
+        Action::OpenLibrary => assets::LIBRARY,
     }
 }
 
@@ -205,6 +208,10 @@ fn action_for_tag(tag: isize) -> Option<Action> {
 }
 
 fn main() {
+    // Тот же исполняемый файл распознаёт текст в отдельном процессе и сразу выходит.
+    if recognize::run_child() {
+        return;
+    }
     // Rust вызывает main на главном потоке процесса, поэтому маркер есть всегда.
     let mtm = MainThreadMarker::new().expect("main runs on the main thread");
     let app = NSApplication::sharedApplication(mtm);

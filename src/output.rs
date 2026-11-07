@@ -31,7 +31,7 @@ use objc2_image_io::{
 
 use crate::capture::{Kind, Shot};
 use crate::settings::{AfterCapture, DEFAULT_FILE_NAME_TEMPLATE, Format, Settings, WindowBackground};
-use crate::{backdrop, bridge, editor, pin, preview, recognize};
+use crate::{backdrop, bridge, editor, library, pin, preview, recognize};
 
 unsafe extern "C" {
     fn setxattr(
@@ -181,6 +181,7 @@ pub fn save(
     if let Some(shot) = shot {
         mark_as_screenshot(&path, shot);
     }
+    library::add(&path);
     Ok(path)
 }
 

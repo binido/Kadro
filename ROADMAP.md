@@ -45,7 +45,7 @@ A version is done when all of these hold:
 | 0.9 | Text and QR recognition | Done |
 | 0.10 | Scrolling capture | Done |
 | 0.11 | Upload and share links | Done |
-| 0.12 | Screenshot library | Planned |
+| 0.12 | Screenshot library | Done |
 | 0.13 | URL scheme and app behavior | Planned |
 | 1.0 | Complete, polished release | Planned |
 
@@ -255,7 +255,7 @@ Technical notes:
 
 Done when: uploads work against at least two providers, and signing has tests with known vectors.
 
-## 0.12 — Screenshot library
+## 0.12 — Screenshot library (shipped)
 
 **Goal:** find past screenshots.
 
