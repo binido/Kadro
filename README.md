@@ -42,6 +42,12 @@ Text and codes:
 - QR codes and barcodes are read in the same pass: a link is offered to open or copy, other contents are copied.
 - Recognition uses Apple Vision on the Mac, with no network. The language is the system's or one chosen in settings, and lines can be joined into one.
 
+Upload:
+
+- Upload a screenshot from the preview, the editor or the menu (Upload Last Screenshot) to any S3-compatible storage: Amazon S3, Cloudflare R2, Backblaze B2, MinIO and others. When the upload finishes, the link is on the clipboard.
+- The link is temporary (1 hour, 1 day or 7 days), public (the bucket's address or your own domain), or none.
+- Requests are signed with AWS Signature V4 by Kadro itself, with no SDK. The access and secret keys are kept in the Keychain. Test Connection uploads and deletes a small file to check the keys, the bucket and write access.
+
 Pinned screenshots:
 
 - Pin a capture from its preview, or pin the last screenshot from the menu or a shortcut. The pin opens exactly where the capture was taken, at 100% (one image pixel per screen pixel).
@@ -84,12 +90,19 @@ A compact native preferences window uses Space Grotesk typography and Lucide ico
 - Keep the editor above other windows
 - Zoom with the scroll wheel
 
+**Upload**
+
+- Endpoint, region, bucket, path prefix
+- Access key and secret key, stored in the Keychain
+- Link to copy after upload: none, temporary (1 hour, 1 day, 7 days), public with an optional custom address
+- Test Connection
+
 **Shortcuts**
 
 - Capture region, repeat last region
 - Capture full screen, now or in 3 seconds
 - Capture window, capture active window
-- Scrolling capture, pin last screenshot, edit last screenshot, recognize text
+- Scrolling capture, pin last screenshot, edit last screenshot, upload last screenshot, recognize text
 - Every shortcut can be recorded or cleared, with conflict detection against Kadro, macOS and other apps
 
 ## Technical constraints

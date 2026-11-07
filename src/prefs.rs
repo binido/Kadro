@@ -9,9 +9,10 @@ use objc2_app_kit::{
     NSAlert, NSApplication, NSBeep, NSBezelStyle, NSBox, NSBoxType, NSButton, NSCellImagePosition, NSColor,
     NSColorSpace, NSColorWell, NSColorWellStyle, NSControl, NSControlStateValueOff, NSControlStateValueOn,
     NSControlTextEditingDelegate, NSEvent, NSEventModifierFlags, NSGridCell, NSGridCellPlacement, NSGridView,
-    NSLineBreakMode, NSModalResponseOK, NSOpenPanel, NSPopUpButton, NSResponder, NSStackView, NSTabViewController,
-    NSTabViewControllerTabStyle, NSTabViewItem, NSTextField, NSTextFieldDelegate, NSView, NSViewController, NSWindow,
-    NSWindowStyleMask, NSWindowToolbarStyle, NSWorkspace,
+    NSLineBreakMode, NSModalResponseOK, NSOpenPanel, NSPopUpButton, NSResponder, NSSecureTextField, NSStackView,
+    NSTabViewController, NSTabViewControllerTabStyle, NSTabViewItem, NSTextField, NSTextFieldDelegate,
+    NSUserInterfaceItemIdentification, NSView, NSViewController, NSWindow, NSWindowStyleMask, NSWindowToolbarStyle,
+    NSWorkspace,
 };
 use objc2_foundation::{
     NSArray, NSLocale, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRange, NSRect, NSSize, NSString, NSURL,
@@ -22,9 +23,9 @@ use objc2_service_management::{SMAppService, SMAppServiceStatus};
 use crate::hotkeys::{self, Action, Shortcut};
 use crate::settings::{
     self, AfterCapture, Choice, Confirmation, Cursor, DEFAULT_FILE_NAME_TEMPLATE, DefaultZoom, EscAction, Format,
-    PreviewHiding, ScrollLimit, ScrollSpeed, Settings, WindowBackground,
+    LinkExpiry, LinkKind, PreviewHiding, ScrollLimit, ScrollSpeed, Settings, WindowBackground,
 };
-use crate::{assets, keys, recognize};
+use crate::{assets, keys, output, recognize, upload};
 
 const MARGIN: f64 = 24.0;
 const FIELD_WIDTH: f64 = 240.0;
@@ -44,6 +45,8 @@ struct ControllerIvars {
     copy: OnceCell<Retained<NSButton>>,
     save: OnceCell<Retained<NSButton>>,
     directory: OnceCell<Retained<NSButton>>,
+    /// Итог проверки подключения к хранилищу.
+    test_status: OnceCell<Retained<NSTextField>>,
 }
 
 define_class!(
@@ -55,11 +58,16 @@ define_class!(
     unsafe impl NSObjectProtocol for Controller {}
 
     unsafe impl NSControlTextEditingDelegate for Controller {
-        // Шаблон имени сохраняется на каждое изменение, отдельной кнопки нет.
+        // Поля сохраняются на каждое изменение, отдельной кнопки нет. Идентификатор поля - ключ
+        // настройки, у ключей доступа - имя записи в Связке ключей, у шаблона имени его нет.
         #[unsafe(method(controlTextDidChange:))]
         fn control_text_did_change(&self, notification: &NSNotification) {
-            if let Some(field) = notification.object().and_then(|o| o.downcast::<NSTextField>().ok()) {
-                settings::set_string(settings::FILE_NAME_TEMPLATE, &field.stringValue().to_string());
+            let Some(field) = notification.object().and_then(|o| o.downcast::<NSTextField>().ok()) else { return };
+            let value = field.stringValue().to_string();
+            match field.identifier().map(|id| id.to_string()) {
+                Some(id) if id == upload::ACCESS_KEY || id == upload::SECRET_KEY => upload::set_secret(&id, value.trim()),
+                Some(key) => settings::set_string(&key, &value),
+                None => settings::set_string(settings::FILE_NAME_TEMPLATE, &value),
             }
         }
     }
@@ -137,6 +145,41 @@ define_class!(
         #[unsafe(method(toggleScrollReverse:))]
         fn toggle_scroll_reverse(&self, sender: &NSButton) {
             settings::set_flag(settings::SCROLL_REVERSE, is_on(sender));
+        }
+
+        #[unsafe(method(changeLinkKind:))]
+        fn change_link_kind(&self, sender: &NSButton) {
+            store_choice::<LinkKind>(sender);
+        }
+
+        #[unsafe(method(changeLinkExpiry:))]
+        fn change_link_expiry(&self, sender: &NSButton) {
+            store_choice::<LinkExpiry>(sender);
+        }
+
+        // Проверка идёт в сети, поэтому вне главного потока, а итог пишется под кнопкой.
+        #[unsafe(method(testUpload:))]
+        fn test_upload(&self, _sender: &NSButton) {
+            let Some(status) = self.ivars().test_status.get() else { return };
+            let storage = upload::Storage::load();
+            if !storage.is_configured() {
+                return status.setStringValue(ns_string!("Fill in the bucket and both keys first."));
+            }
+            status.setStringValue(ns_string!("Testing…"));
+            output::in_background(move || {
+                let result = storage.test();
+                dispatch2::DispatchQueue::main().exec_async(move || {
+                    let text = match result {
+                        Ok(()) => "Connection works: Kadro can upload to this bucket.".to_string(),
+                        Err(message) => message,
+                    };
+                    CONTROLLER.with(|c| {
+                        if let Some(status) = c.get().and_then(|c| c.ivars().test_status.get()) {
+                            status.setStringValue(&NSString::from_str(&text));
+                        }
+                    });
+                });
+            });
         }
 
         #[unsafe(method(toggleSingleLine:))]
@@ -383,6 +426,7 @@ fn build_window(mtm: MainThreadMarker) -> Retained<NSWindow> {
     for (title, icon, view) in [
         ("General", assets::SLIDERS, general_tab(mtm, &controller)),
         ("Editor", assets::SQUARE_PEN, editor_tab(mtm, &controller)),
+        ("Upload", assets::CLOUD_UPLOAD, upload_tab(mtm, &controller)),
         ("Shortcuts", assets::KEYBOARD, shortcuts_tab(mtm, &controller)),
     ] {
         let page = NSViewController::new(mtm);
@@ -532,6 +576,82 @@ fn editor_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView
             Row::Field("Window", view(&on_top)),
             Row::Field("Zoom", view(&scroll)),
             Row::Field("", view(&scroll_hint)),
+        ],
+        Columns::Fitted,
+    )
+}
+
+/// Хранилище для загрузки: адрес, бакет, ключи, вид ссылки и проверка подключения.
+fn upload_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView> {
+    let current = upload::Storage::load();
+    let field = |value: &str, placeholder: &str, id: &str, secure: bool| {
+        let field: Retained<NSTextField> = if secure {
+            let secure: Retained<NSSecureTextField> =
+                unsafe { msg_send![NSSecureTextField::alloc(mtm), initWithFrame: NSRect::ZERO] };
+            secure.setStringValue(&NSString::from_str(value));
+            Retained::into_super(secure)
+        } else {
+            NSTextField::textFieldWithString(&NSString::from_str(value), mtm)
+        };
+        field.setPlaceholderString(Some(&NSString::from_str(placeholder)));
+        field.setFont(Some(&assets::font(FONT_SIZE)));
+        field.setIdentifier(Some(&NSString::from_str(id)));
+        field.widthAnchor().constraintEqualToConstant(FIELD_WIDTH * 1.5).setActive(true);
+        // Делегат не удерживается полем, контроллер живёт в CONTROLLER.
+        unsafe { field.setDelegate(Some(ProtocolObject::from_ref(controller))) };
+        view(&field)
+    };
+    let text = |key: &str| settings::string(key).unwrap_or_default();
+    let endpoint = field(
+        &text(settings::UPLOAD_ENDPOINT),
+        "Empty for Amazon S3, or https://… for R2, B2 and others",
+        settings::UPLOAD_ENDPOINT,
+        false,
+    );
+    let region = field(&text(settings::UPLOAD_REGION), "us-east-1, or auto for R2", settings::UPLOAD_REGION, false);
+    let bucket = field(&text(settings::UPLOAD_BUCKET), "my-screenshots", settings::UPLOAD_BUCKET, false);
+    let prefix =
+        field(&text(settings::UPLOAD_PREFIX), "Folder inside the bucket, optional", settings::UPLOAD_PREFIX, false);
+    let access = field(&current.access_key, "Stored in the Keychain", upload::ACCESS_KEY, false);
+    let secret = field(&current.secret_key, "Stored in the Keychain", upload::SECRET_KEY, true);
+    let links = radios(mtm, current.links, controller, sel!(changeLinkKind:));
+    let expiry = radios(mtm, current.expiry, controller, sel!(changeLinkExpiry:));
+    let public_url = field(
+        &text(settings::UPLOAD_PUBLIC_URL),
+        "https://img.example.com, empty for the bucket's own address",
+        settings::UPLOAD_PUBLIC_URL,
+        false,
+    );
+    let test = unsafe {
+        NSButton::buttonWithTitle_target_action(
+            ns_string!("Test Connection"),
+            Some(controller),
+            Some(sel!(testUpload:)),
+            mtm,
+        )
+    };
+    let status = label(mtm, "");
+    status.setTextColor(Some(&NSColor::secondaryLabelColor()));
+    status.setLineBreakMode(NSLineBreakMode::ByWordWrapping);
+    status.setPreferredMaxLayoutWidth(FIELD_WIDTH * 1.5);
+    let _ = controller.ivars().test_status.set(status.clone());
+    grid(
+        mtm,
+        &[
+            Row::Field("Endpoint", endpoint),
+            Row::Field("Region", region),
+            Row::Field("Bucket", bucket),
+            Row::Field("Path prefix", prefix),
+            Row::Separator,
+            Row::Field("Access key", access),
+            Row::Field("Secret key", secret),
+            Row::Separator,
+            Row::Field("Copy after upload", inline(mtm, &links)),
+            Row::Field("Temporary links last", inline(mtm, &expiry)),
+            Row::Field("Public address", public_url),
+            Row::Separator,
+            Row::Field("", view(&test)),
+            Row::Field("", view(&status)),
         ],
         Columns::Fitted,
     )

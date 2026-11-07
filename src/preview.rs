@@ -27,7 +27,7 @@ use objc2_user_notifications::{
 use crate::capture::Shot;
 use crate::output::{self, in_background};
 use crate::settings::{Confirmation, PreviewHiding, Settings};
-use crate::{assets, editor, geometry, pin, recognize};
+use crate::{assets, editor, geometry, pin, recognize, upload};
 
 /// Наибольший размер миниатюры в точках.
 const MAX_SIZE: NSSize = NSSize::new(220.0, 160.0);
@@ -166,6 +166,15 @@ define_class!(
             recognize::recognize_and_show(self.ivars().image.clone());
         }
 
+        // Ссылка уходит в буфер обмена, когда загрузка закончится, а снимок считается отправленным.
+        #[unsafe(method(uploadImage:))]
+        fn upload_image(&self, _sender: Option<&AnyObject>) {
+            let ivars = self.ivars();
+            upload::upload(self.mtm(), ivars.image.clone(), ivars.scale, Some(ivars.shot.clone()));
+            ivars.handled.set(true);
+            dismiss(Dismissal::Done);
+        }
+
         #[unsafe(method(pinImage:))]
         fn pin_image(&self, _sender: Option<&AnyObject>) {
             let ivars = self.ivars();
@@ -219,16 +228,17 @@ impl ThumbnailView {
         this.addTrackingArea(&area);
 
         let inset = 6.0;
-        // Нижний ряд по центру: Edit, Copy, Save, Text, Pin с зазором в 8 точек.
+        // Нижний ряд по центру: Edit, Copy, Save, Upload, Text, Pin с зазором в 8 точек.
         let step = BUTTON_SIZE + 8.0;
-        let row_left = size.width / 2.0 - (5.0 * BUTTON_SIZE + 32.0) / 2.0;
+        let row_left = size.width / 2.0 - (6.0 * BUTTON_SIZE + 40.0) / 2.0;
         let buttons = [
             (assets::X, sel!(closePreview:), NSPoint::new(inset, size.height - BUTTON_SIZE - inset)),
             (assets::SQUARE_PEN, sel!(editImage:), NSPoint::new(row_left, inset)),
             (assets::COPY, sel!(copyImage:), NSPoint::new(row_left + step, inset)),
             (assets::SAVE, sel!(saveImage:), NSPoint::new(row_left + 2.0 * step, inset)),
-            (assets::SCAN_TEXT, sel!(recognizeText:), NSPoint::new(row_left + 3.0 * step, inset)),
-            (assets::PIN, sel!(pinImage:), NSPoint::new(row_left + 4.0 * step, inset)),
+            (assets::CLOUD_UPLOAD, sel!(uploadImage:), NSPoint::new(row_left + 3.0 * step, inset)),
+            (assets::SCAN_TEXT, sel!(recognizeText:), NSPoint::new(row_left + 4.0 * step, inset)),
+            (assets::PIN, sel!(pinImage:), NSPoint::new(row_left + 5.0 * step, inset)),
         ]
         .map(|(icon, action, origin)| this.add_button(mtm, icon, action, origin));
         *this.ivars().buttons.borrow_mut() = buttons.to_vec();
