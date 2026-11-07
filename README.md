@@ -22,7 +22,7 @@ Output:
 
 Editor:
 
-- Opens from the preview (Edit), the menu (Edit Last Screenshot, Open File…, Open from Clipboard), a shortcut, or right after a capture when Show after capture is set to Editor. PNG, JPEG, HEIC and GIF files can be opened with Kadro from Finder.
+- Opens from the preview (Edit), the menu (More → Edit Last Screenshot, Open File…, Open from Clipboard), a shortcut, or right after a capture when Show after capture is set to Editor. PNG, JPEG, HEIC and GIF files can be opened with Kadro from Finder.
 - Zoom with pinch or ⌘ + scroll (or the plain scroll wheel, if chosen), ⌘+ / ⌘− / ⌘0 (100%) / ⌘9 (fit), or the toolbar. 100% is one image pixel per screen pixel.
 - Crop (C or the toolbar, drag, Return), Uncrop to bring back everything cropped away, and Resize with a locked aspect ratio.
 - Annotations from the tool column on the left or a single key: Select (V), Arrow (A), Line (L), Rectangle (R), Oval (O), Pen (P), Highlighter (H), Text (T), Counter (N), Blur (B), Pixelate (X), Spotlight (S) and Magnifier (M).
@@ -44,7 +44,7 @@ Text and codes:
 
 Upload:
 
-- Upload a screenshot from the preview, the editor or the menu (Upload Last Screenshot) to any S3-compatible storage: Amazon S3, Cloudflare R2, Backblaze B2, MinIO and others. When the upload finishes, the link is on the clipboard.
+- Upload a screenshot from the preview, the editor or the menu (More → Upload Last Screenshot) to any S3-compatible storage: Amazon S3, Cloudflare R2, Backblaze B2, MinIO and others. When the upload finishes, the link is on the clipboard.
 - The link is temporary (1 hour, 1 day or 7 days), public (the bucket's address or your own domain), or none.
 - Requests are signed with AWS Signature V4 by Kadro itself, with no SDK. The access and secret keys are kept in the Keychain. Test Connection uploads and deletes a small file to check the keys, the bucket and write access.
 
@@ -57,7 +57,7 @@ Library:
 
 Pinned screenshots:
 
-- Pin a capture from its preview, or pin the last screenshot from the menu or a shortcut. The pin opens exactly where the capture was taken, at 100% (one image pixel per screen pixel).
+- Pin a capture from its preview, or pin the last screenshot from the menu (More) or a shortcut. The pin opens exactly where the capture was taken, at 100% (one image pixel per screen pixel).
 - Pins float above other windows on every Space and over full-screen apps, without taking focus from them. Drag anywhere to move one.
 - The context menu has Copy, 50% / 100% / 200%, Semi-transparent and Close. ⌘C copies; Esc or a double-click closes. Several pins can be open at once.
 - The last screenshot is kept as a file in the temporary folder, not in memory.
@@ -70,6 +70,7 @@ Pinned screenshots:
 App:
 
 - Native menu bar app with configurable global shortcuts and launch at login.
+- The menu keeps the everyday actions on top: region, window, full screen, scrolling capture, Recognize Text, Library, Settings. The rest (repeat last region, delayed and active window capture, pin, edit and upload last screenshot, Open File…, Open from Clipboard, Check for Updates…) is under More.
 - The menu bar icon can be hidden. Opening Kadro again from Applications shows Settings, and the Show Kadro Menu shortcut opens the menu at the pointer.
 - Check for Updates compares with the latest GitHub release and offers to open its page; an automatic check runs once a day unless turned off.
 

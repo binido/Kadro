@@ -184,21 +184,33 @@ impl AppDelegate {
 
         let menu = NSMenu::new(mtm);
         menu.setDelegate(Some(ProtocolObject::from_ref(self)));
-        for (index, action) in Action::ALL.into_iter().enumerate() {
-            // Это сочетание и так открывает само меню.
-            if action == Action::ShowMenu {
-                continue;
-            }
-            let item = self.add_item(&menu, action.title(), sel!(runAction:), "", action_icon(action));
-            item.setTag(tag_for_action(index));
+        for action in [Action::Region, Action::Window, Action::Screen, Action::ScrollCapture, Action::RecognizeText] {
+            self.add_action(&menu, action);
         }
         menu.addItem(&NSMenuItem::separatorItem(mtm));
-        self.add_item(&menu, "Open File…", sel!(openFile:), "o", assets::FOLDER_OPEN);
-        self.add_item(&menu, "Open from Clipboard", sel!(openClipboard:), "", assets::CLIPBOARD_PASTE);
+        self.add_action(&menu, Action::OpenLibrary);
+
+        // Редкие действия. У части из них нет сочетания по умолчанию, поэтому они остаются в меню.
+        let more = NSMenu::new(mtm);
+        more.setDelegate(Some(ProtocolObject::from_ref(self)));
+        for action in [Action::RepeatRegion, Action::DelayedScreen, Action::ActiveWindow] {
+            self.add_action(&more, action);
+        }
+        more.addItem(&NSMenuItem::separatorItem(mtm));
+        for action in [Action::PinLast, Action::EditLast, Action::UploadLast] {
+            self.add_action(&more, action);
+        }
+        more.addItem(&NSMenuItem::separatorItem(mtm));
+        self.add_item(&more, "Open File…", sel!(openFile:), "o", assets::FOLDER_OPEN);
+        self.add_item(&more, "Open from Clipboard", sel!(openClipboard:), "", assets::CLIPBOARD_PASTE);
+        more.addItem(&NSMenuItem::separatorItem(mtm));
+        self.add_item(&more, "Check for Updates…", sel!(checkForUpdates:), "", assets::REPEAT);
+        let more_item = unsafe { menu.addItemWithTitle_action_keyEquivalent(ns_string!("More"), None, ns_string!("")) };
+        more_item.setImage(assets::icon(assets::ELLIPSIS, 16.0).as_deref());
+        more_item.setSubmenu(Some(&more));
+
         menu.addItem(&NSMenuItem::separatorItem(mtm));
-        self.add_item(&menu, "Check for Updates…", sel!(checkForUpdates:), "", assets::REPEAT);
         self.add_item(&menu, "Settings…", sel!(showSettings:), ",", assets::SETTINGS);
-        menu.addItem(&NSMenuItem::separatorItem(mtm));
         // Без target действие уходит по цепочке ответчиков и попадает в NSApplication.
         unsafe {
             menu.addItemWithTitle_action_keyEquivalent(
@@ -215,6 +227,13 @@ impl AppDelegate {
         MENU.with(|slot| {
             let _ = slot.set(menu);
         });
+    }
+
+    /// Пункт действия. Сочетание рядом с ним ставит `menuNeedsUpdate:` по tag.
+    fn add_action(&self, menu: &NSMenu, action: Action) {
+        let index = Action::ALL.iter().position(|a| *a == action).unwrap_or_default();
+        let item = self.add_item(menu, action.title(), sel!(runAction:), "", action_icon(action));
+        item.setTag(tag_for_action(index));
     }
 
     fn add_item(&self, menu: &NSMenu, title: &str, action: Sel, key: &str, icon: &[u8]) -> Retained<NSMenuItem> {
