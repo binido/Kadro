@@ -7,7 +7,6 @@
 use std::cell::{Cell, OnceCell, RefCell};
 use std::path::Path;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use block2::RcBlock;
 use objc2::rc::{Retained, Weak};
@@ -40,7 +39,7 @@ use crate::capture::Shot;
 use crate::document::{self, Doc, History, PixelRect, State, present};
 use crate::paint::{self, Mode};
 use crate::settings::{DefaultZoom, EscAction, Settings};
-use crate::{assets, keys, measure, output, overlay, pin, preview};
+use crate::{assets, keys, measure, output, overlay, pin, preview, recognize};
 
 const ZOOM_STEP: f64 = 1.25;
 const MIN_ZOOM: f64 = 0.05;
@@ -64,9 +63,6 @@ thread_local! {
     static ADD_TARGET: RefCell<Option<Weak<Editor>>> = const { RefCell::new(None) };
 }
 
-/// Следующий снимок области идёт в редактор, а не в буфер обмена и файл. Читается из потока захвата.
-static ADDING: AtomicBool = AtomicBool::new(false);
-
 /// Кнопка панели инструментов: идентификатор, подпись, иконка и действие.
 struct Button {
     id: &'static str,
@@ -75,7 +71,7 @@ struct Button {
     action: Sel,
 }
 
-fn buttons() -> [Button; 16] {
+fn buttons() -> [Button; 17] {
     [
         Button { id: "undo", label: "Undo", icon: assets::UNDO, action: sel!(undoEdit:) },
         Button { id: "redo", label: "Redo", icon: assets::REDO, action: sel!(redoEdit:) },
@@ -85,6 +81,7 @@ fn buttons() -> [Button; 16] {
         Button { id: "rasterize", label: "Rasterize", icon: assets::LAYERS, action: sel!(rasterize:) },
         Button { id: "addCapture", label: "Add Capture", icon: assets::IMAGE_PLUS, action: sel!(addCapture:) },
         Button { id: "backdrop", label: "Backdrop", icon: assets::WALLPAPER, action: sel!(showBackdrop:) },
+        Button { id: "recognize", label: "Recognize Text", icon: assets::SCAN_TEXT, action: sel!(recognizeText:) },
         Button { id: "zoomOut", label: "Zoom Out", icon: assets::ZOOM_OUT, action: sel!(zoomOut:) },
         Button { id: "zoomFit", label: "Fit", icon: assets::MAXIMIZE, action: sel!(zoomToFit:) },
         Button { id: "zoomIn", label: "Zoom In", icon: assets::ZOOM_IN, action: sel!(zoomIn:) },
@@ -97,7 +94,7 @@ fn buttons() -> [Button; 16] {
 }
 
 /// Порядок кнопок: группы разделены гибким пробелом.
-const TOOLBAR_LAYOUT: [&str; 24] = [
+const TOOLBAR_LAYOUT: [&str; 25] = [
     "undo",
     "redo",
     "",
@@ -111,6 +108,7 @@ const TOOLBAR_LAYOUT: [&str; 24] = [
     "rasterize",
     "addCapture",
     "backdrop",
+    "recognize",
     "",
     "zoomOut",
     "zoomFit",
@@ -318,6 +316,11 @@ define_class!(
         #[unsafe(method(reverseBackdrop:))]
         fn reverse_backdrop(&self, _sender: Option<&AnyObject>) {
             self.change_fill(Fill::reversed);
+        }
+
+        #[unsafe(method(recognizeText:))]
+        fn recognize_text(&self, _sender: Option<&AnyObject>) {
+            recognize::recognize_and_show(self.rendered());
         }
 
         #[unsafe(method(exportGif:))]
@@ -929,9 +932,9 @@ impl Editor {
     /// Ждёт снимок области и кладёт его на холст. Снимок не копируется и не сохраняется.
     fn add_capture(&self) {
         ADD_TARGET.set(Some(Weak::new(self)));
-        ADDING.store(true, Ordering::SeqCst);
+        output::route_next(output::Route::Editor);
         if !overlay::select(self.mtm(), overlay::Mode::Region) {
-            cancel_adding();
+            output::cancel_route();
         }
     }
 
@@ -1915,16 +1918,6 @@ pub fn open(mtm: MainThreadMarker, image: CFRetained<CGImage>, scale: f64, shot:
     window.makeKeyAndOrderFront(None);
     editor.initial_zoom();
     EDITORS.with_borrow_mut(|editors| editors.push(editor));
-}
-
-/// Забирает отметку, что снимок области ждёт редактор. Вызывается из потока захвата.
-pub fn take_adding() -> bool {
-    ADDING.swap(false, Ordering::SeqCst)
-}
-
-/// Выделение отменили, следующий снимок идёт обычным путём.
-pub fn cancel_adding() {
-    ADDING.store(false, Ordering::SeqCst);
 }
 
 /// Кладёт снимок на холст редактора, который его ждал. Если редактор закрыли, снимок пропадает.

@@ -9,12 +9,13 @@ use objc2_app_kit::{
     NSAlert, NSApplication, NSBeep, NSBezelStyle, NSBox, NSBoxType, NSButton, NSCellImagePosition, NSColor,
     NSColorSpace, NSColorWell, NSColorWellStyle, NSControl, NSControlStateValueOff, NSControlStateValueOn,
     NSControlTextEditingDelegate, NSEvent, NSEventModifierFlags, NSGridCell, NSGridCellPlacement, NSGridView,
-    NSLineBreakMode, NSModalResponseOK, NSOpenPanel, NSResponder, NSStackView, NSTabViewController,
+    NSLineBreakMode, NSModalResponseOK, NSOpenPanel, NSPopUpButton, NSResponder, NSStackView, NSTabViewController,
     NSTabViewControllerTabStyle, NSTabViewItem, NSTextField, NSTextFieldDelegate, NSView, NSViewController, NSWindow,
     NSWindowStyleMask, NSWindowToolbarStyle, NSWorkspace,
 };
 use objc2_foundation::{
-    NSArray, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRange, NSRect, NSSize, NSString, NSURL, ns_string,
+    NSArray, NSLocale, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRange, NSRect, NSSize, NSString, NSURL,
+    ns_string,
 };
 use objc2_service_management::{SMAppService, SMAppServiceStatus};
 
@@ -23,7 +24,7 @@ use crate::settings::{
     self, AfterCapture, Choice, Confirmation, Cursor, DEFAULT_FILE_NAME_TEMPLATE, DefaultZoom, EscAction, Format,
     PreviewHiding, Settings, WindowBackground,
 };
-use crate::{assets, keys};
+use crate::{assets, keys, recognize};
 
 const MARGIN: f64 = 24.0;
 const FIELD_WIDTH: f64 = 240.0;
@@ -113,6 +114,19 @@ define_class!(
         #[unsafe(method(changeWindowBackground:))]
         fn change_window_background(&self, sender: &NSButton) {
             store_choice::<WindowBackground>(sender);
+        }
+
+        #[unsafe(method(changeRecognitionLanguage:))]
+        fn change_recognition_language(&self, sender: &NSPopUpButton) {
+            // Первый пункт - языки системы, остальные идут в порядке `recognize::languages`.
+            let index = sender.indexOfSelectedItem();
+            let language = usize::try_from(index - 1).ok().and_then(|i| recognize::languages().get(i).cloned());
+            settings::set_string(settings::RECOGNITION_LANGUAGE, language.as_deref().unwrap_or(""));
+        }
+
+        #[unsafe(method(toggleSingleLine:))]
+        fn toggle_single_line(&self, sender: &NSButton) {
+            settings::set_flag(settings::RECOGNITION_SINGLE_LINE, is_on(sender));
         }
 
         #[unsafe(method(changeWindowColor:))]
@@ -438,6 +452,8 @@ fn general_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSVie
     let downscale =
         checkbox(mtm, "Downscale to 1× when saving", current.downscale_retina, controller, sel!(toggleDownscale:));
     let login = checkbox(mtm, "Launch at login", launches_at_login(), controller, sel!(toggleLaunchAtLogin:));
+    let language = recognition_languages(mtm, current.recognition_language.as_deref(), controller);
+    let single_line = checkbox(mtm, "Join lines into one", current.single_line, controller, sel!(toggleSingleLine:));
 
     grid(
         mtm,
@@ -450,6 +466,9 @@ fn general_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSVie
             Row::Separator,
             Row::Field("Cursor in screenshots", inline(mtm, &cursor)),
             Row::Field("Behind windows", inline(mtm, &window_background)),
+            Row::Separator,
+            Row::Field("Recognize text in", view(&language)),
+            Row::Field("", view(&single_line)),
             Row::Separator,
             Row::Field("Autostart", view(&login)),
             Row::Separator,
@@ -642,6 +661,32 @@ fn store_choice<T: Choice>(radio: &NSButton) {
 
 fn view(view: &NSView) -> Retained<NSView> {
     view.retain()
+}
+
+/// Выбор языка распознавания: языки системы или один из языков Vision с английским названием.
+fn recognition_languages(
+    mtm: MainThreadMarker,
+    selected: Option<&str>,
+    target: &Controller,
+) -> Retained<NSPopUpButton> {
+    let popup = NSPopUpButton::initWithFrame_pullsDown(NSPopUpButton::alloc(mtm), NSRect::ZERO, false);
+    let english = NSLocale::localeWithLocaleIdentifier(ns_string!("en"));
+    let languages = recognize::languages();
+    let titles = std::iter::once("System languages".to_string()).chain(languages.iter().map(|code| {
+        let name = english.localizedStringForLocaleIdentifier(&NSString::from_str(code)).to_string();
+        format!("{name} ({code})")
+    }));
+    for title in titles {
+        popup.addItemWithTitle(&NSString::from_str(&title));
+    }
+    let index = selected.and_then(|code| languages.iter().position(|l| l == code)).map_or(0, |i| i + 1);
+    popup.selectItemAtIndex(index as isize);
+    popup.setFont(Some(&assets::font(FONT_SIZE)));
+    unsafe {
+        popup.setTarget(Some(target));
+        popup.setAction(Some(sel!(changeRecognitionLanguage:)));
+    }
+    popup
 }
 
 fn is_on(button: &NSButton) -> bool {

@@ -22,7 +22,7 @@ use objc2_core_graphics::{
 use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSObject, NSPoint, NSRect, NSSize, NSString, ns_string};
 
 use crate::bridge::{self, number};
-use crate::{assets, capture, editor, geometry, keys};
+use crate::{assets, capture, geometry, keys, output};
 
 /// Сторона лупы в точках и сколько пикселей снимка в ней видно по каждой оси.
 const LOUPE_SIZE: f64 = 120.0;
@@ -203,7 +203,7 @@ define_class!(
             let step = if event.modifierFlags().contains(NSEventModifierFlags::Shift) { 10.0 } else { 1.0 };
             let delta = match event.keyCode() {
                 keys::ESCAPE => {
-                    editor::cancel_adding();
+                    output::cancel_route();
                     return close();
                 }
                 keys::LEFT => NSPoint::new(-step, 0.0),
