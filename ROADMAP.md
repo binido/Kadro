@@ -44,7 +44,7 @@ A version is done when all of these hold:
 | 0.8 | Backgrounds and window frames | Done |
 | 0.9 | Text and QR recognition | Done |
 | 0.10 | Scrolling capture | Done |
-| 0.11 | Upload and share links | Planned |
+| 0.11 | Upload and share links | Done |
 | 0.12 | Screenshot library | Planned |
 | 0.13 | URL scheme and app behavior | Planned |
 | 1.0 | Complete, polished release | Planned |
@@ -238,7 +238,7 @@ Technical notes:
 
 Done when: long web pages, chat histories and code editors stitch without visible seams in manual tests, and the offset finder has tests on fixture frames.
 
-## 0.11 — Upload and share links
+## 0.11 — Upload and share links (shipped)
 
 **Goal:** share a screenshot as a link.
 

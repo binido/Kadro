@@ -13,7 +13,7 @@ use objc2_core_foundation::{CFArray, CFRetained};
 use objc2_foundation::{NSArray, NSDictionary, NSString, NSUserDefaults, ns_string};
 
 use crate::bridge::{self, number};
-use crate::{capture, editor, output, overlay, pin};
+use crate::{capture, editor, output, overlay, pin, upload};
 
 type OSStatus = i32;
 
@@ -184,11 +184,12 @@ pub enum Action {
     EditLast,
     RecognizeText,
     ScrollCapture,
+    UploadLast,
 }
 
 impl Action {
     /// Порядок пунктов в меню и строк в настройках.
-    pub const ALL: [Action; 10] = [
+    pub const ALL: [Action; 11] = [
         Action::Region,
         Action::RepeatRegion,
         Action::Screen,
@@ -198,6 +199,7 @@ impl Action {
         Action::ScrollCapture,
         Action::PinLast,
         Action::EditLast,
+        Action::UploadLast,
         Action::RecognizeText,
     ];
 
@@ -213,6 +215,7 @@ impl Action {
             Action::EditLast => "Edit Last Screenshot",
             Action::RecognizeText => "Recognize Text",
             Action::ScrollCapture => "Scrolling Capture",
+            Action::UploadLast => "Upload Last Screenshot",
         }
     }
 
@@ -230,6 +233,7 @@ impl Action {
             Action::ActiveWindow => capture::capture_active_window(mtm),
             Action::PinLast => pin::pin_last(mtm),
             Action::EditLast => editor::open_last(mtm),
+            Action::UploadLast => upload::upload_last(mtm),
             Action::ScrollCapture => {
                 output::route_next(output::Route::Scroll);
                 if !overlay::select(mtm, overlay::Mode::Region) {
@@ -262,6 +266,7 @@ impl Action {
             Action::EditLast => "shortcutEditLast",
             Action::RecognizeText => "shortcutRecognizeText",
             Action::ScrollCapture => "shortcutScrollCapture",
+            Action::UploadLast => "shortcutUploadLast",
         }
     }
 
@@ -277,7 +282,8 @@ impl Action {
             | Action::PinLast
             | Action::EditLast
             | Action::RecognizeText
-            | Action::ScrollCapture => {
+            | Action::ScrollCapture
+            | Action::UploadLast => {
                 return None;
             }
         };

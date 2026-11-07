@@ -39,7 +39,7 @@ use crate::capture::Shot;
 use crate::document::{self, Doc, History, PixelRect, State, present};
 use crate::paint::{self, Mode};
 use crate::settings::{DefaultZoom, EscAction, Settings};
-use crate::{assets, keys, measure, output, overlay, pin, preview, recognize};
+use crate::{assets, keys, measure, output, overlay, pin, preview, recognize, upload};
 
 const ZOOM_STEP: f64 = 1.25;
 const MIN_ZOOM: f64 = 0.05;
@@ -71,7 +71,7 @@ struct Button {
     action: Sel,
 }
 
-fn buttons() -> [Button; 17] {
+fn buttons() -> [Button; 18] {
     [
         Button { id: "undo", label: "Undo", icon: assets::UNDO, action: sel!(undoEdit:) },
         Button { id: "redo", label: "Redo", icon: assets::REDO, action: sel!(redoEdit:) },
@@ -88,13 +88,14 @@ fn buttons() -> [Button; 17] {
         Button { id: "copy", label: "Copy", icon: assets::COPY, action: sel!(copyImage:) },
         Button { id: "save", label: "Save", icon: assets::SAVE, action: sel!(saveImage:) },
         Button { id: "saveAs", label: "Save As", icon: assets::FOLDER_OPEN, action: sel!(saveImageAs:) },
+        Button { id: "upload", label: "Upload", icon: assets::CLOUD_UPLOAD, action: sel!(uploadImage:) },
         Button { id: "exportGif", label: "Export GIF", icon: assets::FILM, action: sel!(exportGif:) },
         Button { id: "print", label: "Print", icon: assets::PRINTER, action: sel!(printImage:) },
     ]
 }
 
 /// Порядок кнопок: группы разделены гибким пробелом.
-const TOOLBAR_LAYOUT: [&str; 25] = [
+const TOOLBAR_LAYOUT: [&str; 26] = [
     "undo",
     "redo",
     "",
@@ -117,6 +118,7 @@ const TOOLBAR_LAYOUT: [&str; 25] = [
     "copy",
     "save",
     "saveAs",
+    "upload",
     "exportGif",
     "print",
     "",
@@ -316,6 +318,11 @@ define_class!(
         #[unsafe(method(reverseBackdrop:))]
         fn reverse_backdrop(&self, _sender: Option<&AnyObject>) {
             self.change_fill(Fill::reversed);
+        }
+
+        #[unsafe(method(uploadImage:))]
+        fn upload_image(&self, _sender: Option<&AnyObject>) {
+            upload::upload(self.mtm(), self.rendered(), self.ivars().scale, self.ivars().shot.clone());
         }
 
         #[unsafe(method(recognizeText:))]

@@ -22,7 +22,9 @@ mod preview;
 mod recognize;
 mod scroll;
 mod settings;
+mod sigv4;
 mod stitch;
+mod upload;
 
 use std::cell::OnceCell;
 
@@ -187,6 +189,7 @@ fn action_icon(action: Action) -> &'static [u8] {
         Action::EditLast => assets::SQUARE_PEN,
         Action::RecognizeText => assets::SCAN_TEXT,
         Action::ScrollCapture => assets::SCROLL,
+        Action::UploadLast => assets::CLOUD_UPLOAD,
     }
 }
 

@@ -251,6 +251,83 @@ impl Choice for ScrollSpeed {
     }
 }
 
+pub const UPLOAD_ENDPOINT: &str = "uploadEndpoint";
+pub const UPLOAD_REGION: &str = "uploadRegion";
+pub const UPLOAD_BUCKET: &str = "uploadBucket";
+pub const UPLOAD_PREFIX: &str = "uploadPrefix";
+pub const UPLOAD_PUBLIC_URL: &str = "uploadPublicUrl";
+
+/// Какую ссылку копировать после загрузки.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum LinkKind {
+    /// Только загрузить.
+    None,
+    /// Подписанная ссылка, которая работает ограниченное время.
+    Presigned,
+    /// Постоянная ссылка на публичный бакет или его домен.
+    Public,
+}
+
+impl Choice for LinkKind {
+    const DEFAULTS_KEY: &'static str = "uploadLinks";
+    const ALL: &'static [Self] = &[LinkKind::None, LinkKind::Presigned, LinkKind::Public];
+
+    fn title(self) -> &'static str {
+        match self {
+            LinkKind::None => "No link",
+            LinkKind::Presigned => "Temporary",
+            LinkKind::Public => "Public",
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            LinkKind::None => "none",
+            LinkKind::Presigned => "presigned",
+            LinkKind::Public => "public",
+        }
+    }
+}
+
+/// Сколько работает временная ссылка. S3 разрешает не больше 7 дней.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum LinkExpiry {
+    Hour,
+    Day,
+    Week,
+}
+
+impl LinkExpiry {
+    pub fn seconds(self) -> u64 {
+        match self {
+            LinkExpiry::Hour => 3_600,
+            LinkExpiry::Day => 86_400,
+            LinkExpiry::Week => 604_800,
+        }
+    }
+}
+
+impl Choice for LinkExpiry {
+    const DEFAULTS_KEY: &'static str = "uploadExpiry";
+    const ALL: &'static [Self] = &[LinkExpiry::Hour, LinkExpiry::Day, LinkExpiry::Week];
+
+    fn title(self) -> &'static str {
+        match self {
+            LinkExpiry::Hour => "1 hour",
+            LinkExpiry::Day => "1 day",
+            LinkExpiry::Week => "7 days",
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            LinkExpiry::Hour => "hour",
+            LinkExpiry::Day => "day",
+            LinkExpiry::Week => "week",
+        }
+    }
+}
+
 /// Цвет из записи `#RRGGBB`.
 pub fn parse_color(text: &str) -> Option<Color> {
     let digits = text.strip_prefix('#')?;
@@ -537,6 +614,8 @@ mod tests {
         assert_keys_round_trip::<WindowBackground>();
         assert_keys_round_trip::<ScrollLimit>();
         assert_keys_round_trip::<ScrollSpeed>();
+        assert_keys_round_trip::<LinkKind>();
+        assert_keys_round_trip::<LinkExpiry>();
     }
 
     #[test]
