@@ -48,6 +48,13 @@ Upload:
 - The link is temporary (1 hour, 1 day or 7 days), public (the bucket's address or your own domain), or none.
 - Requests are signed with AWS Signature V4 by Kadro itself, with no SDK. The access and secret keys are kept in the Keychain. Test Connection uploads and deletes a small file to check the keys, the bucket and write access.
 
+Library:
+
+- The Library window (menu or shortcut) shows screenshots saved by Kadro as small, medium or large tiles or as a list. On first open it also brings in the images already in the screenshots folder.
+- Search by name, date and the text on the screenshot. The text is recognized in the background, offline.
+- Double-click or Return opens a screenshot in the editor; the context menu also has Copy, Show in Finder, Upload and Move to Trash.
+- The index is a small file in Application Support and thumbnails are cached, so thousands of screenshots open at once. Text recognition runs in a separate short-lived process, so Kadro's own memory stays low.
+
 Pinned screenshots:
 
 - Pin a capture from its preview, or pin the last screenshot from the menu or a shortcut. The pin opens exactly where the capture was taken, at 100% (one image pixel per screen pixel).
@@ -77,6 +84,7 @@ A compact native preferences window uses Space Grotesk typography and Lucide ico
 - What is behind captured windows: no shadow, transparent, wallpaper, colour
 - Text recognition language, joining recognized lines into one
 - Scrolling capture height limit, scroll speed, reversed direction
+- Library on or off, how many screenshots it remembers
 - Launch at login
 - Show after capture: preview, editor, nothing
 - After screenshot: copy, save
@@ -102,7 +110,7 @@ A compact native preferences window uses Space Grotesk typography and Lucide ico
 - Capture region, repeat last region
 - Capture full screen, now or in 3 seconds
 - Capture window, capture active window
-- Scrolling capture, pin last screenshot, edit last screenshot, upload last screenshot, recognize text
+- Scrolling capture, pin last screenshot, edit last screenshot, upload last screenshot, library, recognize text
 - Every shortcut can be recorded or cleared, with conflict detection against Kadro, macOS and other apps
 
 ## Technical constraints

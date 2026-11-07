@@ -256,6 +256,7 @@ pub const UPLOAD_REGION: &str = "uploadRegion";
 pub const UPLOAD_BUCKET: &str = "uploadBucket";
 pub const UPLOAD_PREFIX: &str = "uploadPrefix";
 pub const UPLOAD_PUBLIC_URL: &str = "uploadPublicUrl";
+pub const LIBRARY: &str = "library";
 
 /// Какую ссылку копировать после загрузки.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -324,6 +325,50 @@ impl Choice for LinkExpiry {
             LinkExpiry::Hour => "hour",
             LinkExpiry::Day => "day",
             LinkExpiry::Week => "week",
+        }
+    }
+}
+
+/// Сколько снимков помнит библиотека. Старые выпадают из индекса, файлы остаются.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum LibraryLimit {
+    Thousand,
+    FiveThousand,
+    TwentyThousand,
+    Unlimited,
+}
+
+impl LibraryLimit {
+    pub fn items(self) -> usize {
+        match self {
+            LibraryLimit::Thousand => 1_000,
+            LibraryLimit::FiveThousand => 5_000,
+            LibraryLimit::TwentyThousand => 20_000,
+            LibraryLimit::Unlimited => usize::MAX,
+        }
+    }
+}
+
+impl Choice for LibraryLimit {
+    const DEFAULTS_KEY: &'static str = "libraryLimit";
+    const ALL: &'static [Self] =
+        &[LibraryLimit::Thousand, LibraryLimit::FiveThousand, LibraryLimit::TwentyThousand, LibraryLimit::Unlimited];
+
+    fn title(self) -> &'static str {
+        match self {
+            LibraryLimit::Thousand => "1 000",
+            LibraryLimit::FiveThousand => "5 000",
+            LibraryLimit::TwentyThousand => "20 000",
+            LibraryLimit::Unlimited => "No limit",
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            LibraryLimit::Thousand => "1000",
+            LibraryLimit::FiveThousand => "5000",
+            LibraryLimit::TwentyThousand => "20000",
+            LibraryLimit::Unlimited => "unlimited",
         }
     }
 }
@@ -507,6 +552,9 @@ pub struct Settings {
     pub scroll_speed: ScrollSpeed,
     /// Крутить в обратную сторону, для приложений с перевёрнутой прокруткой.
     pub scroll_reverse: bool,
+    /// Вести библиотеку сохранённых снимков.
+    pub library: bool,
+    pub library_limit: LibraryLimit,
 }
 
 impl Settings {
@@ -553,6 +601,8 @@ impl Settings {
             scroll_limit: choice().unwrap_or(ScrollLimit::Long),
             scroll_speed: choice().unwrap_or(ScrollSpeed::Normal),
             scroll_reverse: flag(SCROLL_REVERSE).unwrap_or(false),
+            library: flag(LIBRARY).unwrap_or(true),
+            library_limit: choice().unwrap_or(LibraryLimit::FiveThousand),
         }
     }
 }
@@ -616,6 +666,7 @@ mod tests {
         assert_keys_round_trip::<ScrollSpeed>();
         assert_keys_round_trip::<LinkKind>();
         assert_keys_round_trip::<LinkExpiry>();
+        assert_keys_round_trip::<LibraryLimit>();
     }
 
     #[test]

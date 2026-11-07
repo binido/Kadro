@@ -6,13 +6,13 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject, Sel};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSAlert, NSApplication, NSBeep, NSBezelStyle, NSBox, NSBoxType, NSButton, NSCellImagePosition, NSColor,
-    NSColorSpace, NSColorWell, NSColorWellStyle, NSControl, NSControlStateValueOff, NSControlStateValueOn,
-    NSControlTextEditingDelegate, NSEvent, NSEventModifierFlags, NSGridCell, NSGridCellPlacement, NSGridView,
-    NSLineBreakMode, NSModalResponseOK, NSOpenPanel, NSPopUpButton, NSResponder, NSSecureTextField, NSStackView,
-    NSTabViewController, NSTabViewControllerTabStyle, NSTabViewItem, NSTextField, NSTextFieldDelegate,
-    NSUserInterfaceItemIdentification, NSView, NSViewController, NSWindow, NSWindowStyleMask, NSWindowToolbarStyle,
-    NSWorkspace,
+    NSAlert, NSAlertFirstButtonReturn, NSApplication, NSBeep, NSBezelStyle, NSBox, NSBoxType, NSButton,
+    NSCellImagePosition, NSColor, NSColorSpace, NSColorWell, NSColorWellStyle, NSControl, NSControlStateValueOff,
+    NSControlStateValueOn, NSControlTextEditingDelegate, NSEvent, NSEventModifierFlags, NSGridCell,
+    NSGridCellPlacement, NSGridView, NSLineBreakMode, NSModalResponseOK, NSOpenPanel, NSPopUpButton, NSResponder,
+    NSSecureTextField, NSStackView, NSTabViewController, NSTabViewControllerTabStyle, NSTabViewItem, NSTextField,
+    NSTextFieldDelegate, NSUserInterfaceItemIdentification, NSView, NSViewController, NSWindow, NSWindowStyleMask,
+    NSWindowToolbarStyle, NSWorkspace,
 };
 use objc2_foundation::{
     NSArray, NSLocale, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRange, NSRect, NSSize, NSString, NSURL,
@@ -23,9 +23,9 @@ use objc2_service_management::{SMAppService, SMAppServiceStatus};
 use crate::hotkeys::{self, Action, Shortcut};
 use crate::settings::{
     self, AfterCapture, Choice, Confirmation, Cursor, DEFAULT_FILE_NAME_TEMPLATE, DefaultZoom, EscAction, Format,
-    LinkExpiry, LinkKind, PreviewHiding, ScrollLimit, ScrollSpeed, Settings, WindowBackground,
+    LibraryLimit, LinkExpiry, LinkKind, PreviewHiding, ScrollLimit, ScrollSpeed, Settings, WindowBackground,
 };
-use crate::{assets, keys, output, recognize, upload};
+use crate::{assets, keys, library, output, recognize, upload};
 
 const MARGIN: f64 = 24.0;
 const FIELD_WIDTH: f64 = 240.0;
@@ -182,6 +182,16 @@ define_class!(
             });
         }
 
+        #[unsafe(method(toggleLibrary:))]
+        fn toggle_library(&self, sender: &NSButton) {
+            settings::set_flag(settings::LIBRARY, is_on(sender));
+        }
+
+        #[unsafe(method(changeLibraryLimit:))]
+        fn change_library_limit(&self, sender: &NSButton) {
+            store_choice::<LibraryLimit>(sender);
+        }
+
         #[unsafe(method(toggleSingleLine:))]
         fn toggle_single_line(&self, sender: &NSButton) {
             settings::set_flag(settings::RECOGNITION_SINGLE_LINE, is_on(sender));
@@ -222,6 +232,7 @@ define_class!(
                 if let Some(button) = self.ivars().directory.get() {
                     button.setTitle(&NSString::from_str(&display_path(&path.to_string())));
                 }
+                offer_reindex(self.mtm(), std::path::PathBuf::from(path.to_string()));
             }
         }
 
@@ -513,6 +524,9 @@ fn general_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSVie
     let login = checkbox(mtm, "Launch at login", launches_at_login(), controller, sel!(toggleLaunchAtLogin:));
     let language = recognition_languages(mtm, current.recognition_language.as_deref(), controller);
     let single_line = checkbox(mtm, "Join lines into one", current.single_line, controller, sel!(toggleSingleLine:));
+    let library_on =
+        checkbox(mtm, "Keep a library of saved screenshots", current.library, controller, sel!(toggleLibrary:));
+    let library_limit = radios(mtm, current.library_limit, controller, sel!(changeLibraryLimit:));
     let scroll_limit = radios(mtm, current.scroll_limit, controller, sel!(changeScrollLimit:));
     let scroll_speed = radios(mtm, current.scroll_speed, controller, sel!(changeScrollSpeed:));
     let scroll_reverse = checkbox(
@@ -537,6 +551,9 @@ fn general_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSVie
             Row::Separator,
             Row::Field("Recognize text in", view(&language)),
             Row::Field("", view(&single_line)),
+            Row::Separator,
+            Row::Field("Library", view(&library_on)),
+            Row::Field("Remember up to", inline(mtm, &library_limit)),
             Row::Separator,
             Row::Field("Scrolling capture up to", inline(mtm, &scroll_limit)),
             Row::Field("Scroll speed", inline(mtm, &scroll_speed)),
@@ -809,6 +826,23 @@ fn store_choice<T: Choice>(radio: &NSButton) {
 
 fn view(view: &NSView) -> Retained<NSView> {
     view.retain()
+}
+
+/// После смены папки снимков предлагает добавить её снимки в библиотеку.
+fn offer_reindex(mtm: MainThreadMarker, directory: std::path::PathBuf) {
+    if !Settings::load().library {
+        return;
+    }
+    let alert = NSAlert::new(mtm);
+    alert.setMessageText(ns_string!("Add screenshots from the new folder to the library?"));
+    alert.setInformativeText(ns_string!(
+        "Kadro will index the images there and recognize their text in the background."
+    ));
+    alert.addButtonWithTitle(ns_string!("Add"));
+    alert.addButtonWithTitle(ns_string!("Not Now"));
+    if alert.runModal() == NSAlertFirstButtonReturn {
+        output::in_background(move || library::import(&directory));
+    }
 }
 
 /// Выбор языка распознавания: языки системы или один из языков Vision с английским названием.

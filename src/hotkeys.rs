@@ -13,7 +13,7 @@ use objc2_core_foundation::{CFArray, CFRetained};
 use objc2_foundation::{NSArray, NSDictionary, NSString, NSUserDefaults, ns_string};
 
 use crate::bridge::{self, number};
-use crate::{capture, editor, output, overlay, pin, upload};
+use crate::{browser, capture, editor, output, overlay, pin, upload};
 
 type OSStatus = i32;
 
@@ -185,11 +185,12 @@ pub enum Action {
     RecognizeText,
     ScrollCapture,
     UploadLast,
+    OpenLibrary,
 }
 
 impl Action {
     /// Порядок пунктов в меню и строк в настройках.
-    pub const ALL: [Action; 11] = [
+    pub const ALL: [Action; 12] = [
         Action::Region,
         Action::RepeatRegion,
         Action::Screen,
@@ -200,6 +201,7 @@ impl Action {
         Action::PinLast,
         Action::EditLast,
         Action::UploadLast,
+        Action::OpenLibrary,
         Action::RecognizeText,
     ];
 
@@ -216,6 +218,7 @@ impl Action {
             Action::RecognizeText => "Recognize Text",
             Action::ScrollCapture => "Scrolling Capture",
             Action::UploadLast => "Upload Last Screenshot",
+            Action::OpenLibrary => "Library",
         }
     }
 
@@ -234,6 +237,7 @@ impl Action {
             Action::PinLast => pin::pin_last(mtm),
             Action::EditLast => editor::open_last(mtm),
             Action::UploadLast => upload::upload_last(mtm),
+            Action::OpenLibrary => browser::show(mtm),
             Action::ScrollCapture => {
                 output::route_next(output::Route::Scroll);
                 if !overlay::select(mtm, overlay::Mode::Region) {
@@ -267,6 +271,7 @@ impl Action {
             Action::RecognizeText => "shortcutRecognizeText",
             Action::ScrollCapture => "shortcutScrollCapture",
             Action::UploadLast => "shortcutUploadLast",
+            Action::OpenLibrary => "shortcutLibrary",
         }
     }
 
@@ -283,7 +288,8 @@ impl Action {
             | Action::EditLast
             | Action::RecognizeText
             | Action::ScrollCapture
-            | Action::UploadLast => {
+            | Action::UploadLast
+            | Action::OpenLibrary => {
                 return None;
             }
         };
