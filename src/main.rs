@@ -177,7 +177,7 @@ impl AppDelegate {
         let mtm = self.mtm();
         let item = NSStatusBar::systemStatusBar().statusItemWithLength(NSVariableStatusItemLength);
         if let Some(button) = item.button(mtm) {
-            button.setImage(assets::icon(assets::APERTURE, 18.0).as_deref());
+            button.setImage(assets::icon(assets::KADRO, 18.0).as_deref());
             // Иначе секунды отсчёта заменили бы иконку, а не встали рядом.
             button.setImagePosition(NSCellImagePosition::ImageLeading);
         }
@@ -264,7 +264,7 @@ fn action_icon(action: Action) -> &'static [u8] {
         Action::ScrollCapture => assets::SCROLL,
         Action::UploadLast => assets::CLOUD_UPLOAD,
         Action::OpenLibrary => assets::LIBRARY,
-        Action::ShowMenu => assets::APERTURE,
+        Action::ShowMenu => assets::KADRO,
     }
 }
 

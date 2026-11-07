@@ -18,7 +18,7 @@ const WEIGHT_AXIS: u32 = u32::from_be_bytes(*b"wght");
 const REGULAR_WEIGHT: f64 = 400.0;
 const SEMIBOLD_WEIGHT: f64 = 600.0;
 
-pub const APERTURE: &[u8] = include_bytes!("../assets/icons/aperture.svg");
+pub const KADRO: &[u8] = include_bytes!("../assets/icons/kadro.svg");
 pub const SQUARE_DASHED: &[u8] = include_bytes!("../assets/icons/square-dashed.svg");
 pub const MONITOR: &[u8] = include_bytes!("../assets/icons/monitor.svg");
 pub const APP_WINDOW: &[u8] = include_bytes!("../assets/icons/app-window.svg");

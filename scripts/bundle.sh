@@ -14,7 +14,7 @@ rm -rf "$app" build/AppIcon.iconset
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$target_dir/release/kadro" "$app/Contents/MacOS/Kadro"
 
-swift scripts/icon.swift assets/icons/aperture.svg build/AppIcon.iconset
+swift scripts/icon.swift assets/app-icon.svg build/AppIcon.iconset
 iconutil -c icns build/AppIcon.iconset -o "$app/Contents/Resources/AppIcon.icns"
 
 cat > "$app/Contents/Info.plist" <<EOF
