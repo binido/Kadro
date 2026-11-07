@@ -43,7 +43,7 @@ A version is done when all of these hold:
 | 0.7 | Measuring and composing | Done |
 | 0.8 | Backgrounds and window frames | Done |
 | 0.9 | Text and QR recognition | Done |
-| 0.10 | Scrolling capture | Planned |
+| 0.10 | Scrolling capture | Done |
 | 0.11 | Upload and share links | Planned |
 | 0.12 | Screenshot library | Planned |
 | 0.13 | URL scheme and app behavior | Planned |
@@ -221,7 +221,7 @@ Technical notes:
 
 Done when: recognition works offline on English and Russian samples kept as test fixtures.
 
-## 0.10 — Scrolling capture
+## 0.10 — Scrolling capture (shipped)
 
 **Goal:** capture content taller than the screen.
 

@@ -22,7 +22,7 @@ use objc2_service_management::{SMAppService, SMAppServiceStatus};
 use crate::hotkeys::{self, Action, Shortcut};
 use crate::settings::{
     self, AfterCapture, Choice, Confirmation, Cursor, DEFAULT_FILE_NAME_TEMPLATE, DefaultZoom, EscAction, Format,
-    PreviewHiding, Settings, WindowBackground,
+    PreviewHiding, ScrollLimit, ScrollSpeed, Settings, WindowBackground,
 };
 use crate::{assets, keys, recognize};
 
@@ -122,6 +122,21 @@ define_class!(
             let index = sender.indexOfSelectedItem();
             let language = usize::try_from(index - 1).ok().and_then(|i| recognize::languages().get(i).cloned());
             settings::set_string(settings::RECOGNITION_LANGUAGE, language.as_deref().unwrap_or(""));
+        }
+
+        #[unsafe(method(changeScrollLimit:))]
+        fn change_scroll_limit(&self, sender: &NSButton) {
+            store_choice::<ScrollLimit>(sender);
+        }
+
+        #[unsafe(method(changeScrollSpeed:))]
+        fn change_scroll_speed(&self, sender: &NSButton) {
+            store_choice::<ScrollSpeed>(sender);
+        }
+
+        #[unsafe(method(toggleScrollReverse:))]
+        fn toggle_scroll_reverse(&self, sender: &NSButton) {
+            settings::set_flag(settings::SCROLL_REVERSE, is_on(sender));
         }
 
         #[unsafe(method(toggleSingleLine:))]
@@ -454,6 +469,15 @@ fn general_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSVie
     let login = checkbox(mtm, "Launch at login", launches_at_login(), controller, sel!(toggleLaunchAtLogin:));
     let language = recognition_languages(mtm, current.recognition_language.as_deref(), controller);
     let single_line = checkbox(mtm, "Join lines into one", current.single_line, controller, sel!(toggleSingleLine:));
+    let scroll_limit = radios(mtm, current.scroll_limit, controller, sel!(changeScrollLimit:));
+    let scroll_speed = radios(mtm, current.scroll_speed, controller, sel!(changeScrollSpeed:));
+    let scroll_reverse = checkbox(
+        mtm,
+        "Reverse direction, for apps that scroll the other way",
+        current.scroll_reverse,
+        controller,
+        sel!(toggleScrollReverse:),
+    );
 
     grid(
         mtm,
@@ -469,6 +493,10 @@ fn general_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSVie
             Row::Separator,
             Row::Field("Recognize text in", view(&language)),
             Row::Field("", view(&single_line)),
+            Row::Separator,
+            Row::Field("Scrolling capture up to", inline(mtm, &scroll_limit)),
+            Row::Field("Scroll speed", inline(mtm, &scroll_speed)),
+            Row::Field("", view(&scroll_reverse)),
             Row::Separator,
             Row::Field("Autostart", view(&login)),
             Row::Separator,

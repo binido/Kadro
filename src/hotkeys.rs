@@ -183,17 +183,19 @@ pub enum Action {
     PinLast,
     EditLast,
     RecognizeText,
+    ScrollCapture,
 }
 
 impl Action {
     /// Порядок пунктов в меню и строк в настройках.
-    pub const ALL: [Action; 9] = [
+    pub const ALL: [Action; 10] = [
         Action::Region,
         Action::RepeatRegion,
         Action::Screen,
         Action::DelayedScreen,
         Action::Window,
         Action::ActiveWindow,
+        Action::ScrollCapture,
         Action::PinLast,
         Action::EditLast,
         Action::RecognizeText,
@@ -210,6 +212,7 @@ impl Action {
             Action::PinLast => "Pin Last Screenshot",
             Action::EditLast => "Edit Last Screenshot",
             Action::RecognizeText => "Recognize Text",
+            Action::ScrollCapture => "Scrolling Capture",
         }
     }
 
@@ -227,6 +230,12 @@ impl Action {
             Action::ActiveWindow => capture::capture_active_window(mtm),
             Action::PinLast => pin::pin_last(mtm),
             Action::EditLast => editor::open_last(mtm),
+            Action::ScrollCapture => {
+                output::route_next(output::Route::Scroll);
+                if !overlay::select(mtm, overlay::Mode::Region) {
+                    output::cancel_route();
+                }
+            }
             Action::RecognizeText => {
                 output::route_next(output::Route::Text);
                 if !overlay::select(mtm, overlay::Mode::Region) {
@@ -252,6 +261,7 @@ impl Action {
             Action::PinLast => "shortcutPinLast",
             Action::EditLast => "shortcutEditLast",
             Action::RecognizeText => "shortcutRecognizeText",
+            Action::ScrollCapture => "shortcutScrollCapture",
         }
     }
 
@@ -266,7 +276,8 @@ impl Action {
             | Action::ActiveWindow
             | Action::PinLast
             | Action::EditLast
-            | Action::RecognizeText => {
+            | Action::RecognizeText
+            | Action::ScrollCapture => {
                 return None;
             }
         };

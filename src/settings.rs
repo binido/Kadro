@@ -25,6 +25,7 @@ pub const WINDOW_BACKGROUND: &str = "windowBackground";
 pub const WINDOW_COLOR: &str = "windowBackgroundColor";
 pub const RECOGNITION_LANGUAGE: &str = "recognitionLanguage";
 pub const RECOGNITION_SINGLE_LINE: &str = "recognitionSingleLine";
+pub const SCROLL_REVERSE: &str = "scrollReverse";
 pub const PREVIEW_HIDING: &str = "previewHiding";
 pub const CONFIRMATION: &str = "confirmation";
 
@@ -163,6 +164,89 @@ impl Choice for WindowBackground {
             WindowBackground::Shadow => "shadow",
             WindowBackground::Wallpaper => "wallpaper",
             WindowBackground::Color => "color",
+        }
+    }
+}
+
+/// Наибольшая высота склеенного снимка прокрутки.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum ScrollLimit {
+    Short,
+    Medium,
+    Long,
+    Huge,
+}
+
+impl ScrollLimit {
+    pub fn pixels(self) -> usize {
+        match self {
+            ScrollLimit::Short => 5_000,
+            ScrollLimit::Medium => 10_000,
+            ScrollLimit::Long => 20_000,
+            ScrollLimit::Huge => 40_000,
+        }
+    }
+}
+
+impl Choice for ScrollLimit {
+    const DEFAULTS_KEY: &'static str = "scrollLimit";
+    const ALL: &'static [Self] = &[ScrollLimit::Short, ScrollLimit::Medium, ScrollLimit::Long, ScrollLimit::Huge];
+
+    fn title(self) -> &'static str {
+        match self {
+            ScrollLimit::Short => "5 000 px",
+            ScrollLimit::Medium => "10 000 px",
+            ScrollLimit::Long => "20 000 px",
+            ScrollLimit::Huge => "40 000 px",
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            ScrollLimit::Short => "5000",
+            ScrollLimit::Medium => "10000",
+            ScrollLimit::Long => "20000",
+            ScrollLimit::Huge => "40000",
+        }
+    }
+}
+
+/// Насколько далеко прокручивать за шаг автоматической прокрутки.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum ScrollSpeed {
+    Slow,
+    Normal,
+    Fast,
+}
+
+impl ScrollSpeed {
+    /// Шаг как доля высоты области.
+    pub fn step(self) -> f64 {
+        match self {
+            ScrollSpeed::Slow => 0.3,
+            ScrollSpeed::Normal => 0.5,
+            ScrollSpeed::Fast => 0.75,
+        }
+    }
+}
+
+impl Choice for ScrollSpeed {
+    const DEFAULTS_KEY: &'static str = "scrollSpeed";
+    const ALL: &'static [Self] = &[ScrollSpeed::Slow, ScrollSpeed::Normal, ScrollSpeed::Fast];
+
+    fn title(self) -> &'static str {
+        match self {
+            ScrollSpeed::Slow => "Slow",
+            ScrollSpeed::Normal => "Normal",
+            ScrollSpeed::Fast => "Fast",
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            ScrollSpeed::Slow => "slow",
+            ScrollSpeed::Normal => "normal",
+            ScrollSpeed::Fast => "fast",
         }
     }
 }
@@ -342,6 +426,10 @@ pub struct Settings {
     pub recognition_language: Option<String>,
     /// Склеивать распознанные строки в одну.
     pub single_line: bool,
+    pub scroll_limit: ScrollLimit,
+    pub scroll_speed: ScrollSpeed,
+    /// Крутить в обратную сторону, для приложений с перевёрнутой прокруткой.
+    pub scroll_reverse: bool,
 }
 
 impl Settings {
@@ -385,6 +473,9 @@ impl Settings {
             }),
             recognition_language: string(RECOGNITION_LANGUAGE).filter(|language| !language.is_empty()),
             single_line: flag(RECOGNITION_SINGLE_LINE).unwrap_or(false),
+            scroll_limit: choice().unwrap_or(ScrollLimit::Long),
+            scroll_speed: choice().unwrap_or(ScrollSpeed::Normal),
+            scroll_reverse: flag(SCROLL_REVERSE).unwrap_or(false),
         }
     }
 }
@@ -444,6 +535,8 @@ mod tests {
         assert_keys_round_trip::<EscAction>();
         assert_keys_round_trip::<DefaultZoom>();
         assert_keys_round_trip::<WindowBackground>();
+        assert_keys_round_trip::<ScrollLimit>();
+        assert_keys_round_trip::<ScrollSpeed>();
     }
 
     #[test]
