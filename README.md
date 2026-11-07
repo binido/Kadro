@@ -149,6 +149,10 @@ A compact native preferences window uses Space Grotesk typography and Lucide ico
 - Scrolling capture, pin last screenshot, edit last screenshot, upload last screenshot, library, recognize text, show the Kadro menu
 - Every shortcut can be recorded or cleared, with conflict detection against Kadro, macOS and other apps
 
+**About**
+
+- Version, author, MIT License and a link to the repository
+
 ## Technical constraints
 
 - Rust is the primary language.

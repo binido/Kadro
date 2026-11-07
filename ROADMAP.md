@@ -295,6 +295,7 @@ Features:
 
 - **Settings window fits a 13-inch screen.** General is split into General, Capture and Saving, groups get headings instead of separator lines, Shortcuts shows two columns, and the window remembers the last tab. Every tab is under 600 points tall.
 - **Settings window keeps one width.** All tabs share the width of the widest one, and the window can be widened up to 1000 points, with text fields growing along. Height follows the tab.
+- **About tab** in Settings with the version, author, license and a link to the repository.
 
 Done when: every item in this section is fixed and checked by hand.
 
