@@ -10,9 +10,9 @@ use objc2_app_kit::{
     NSColorSpace, NSColorWell, NSColorWellStyle, NSControl, NSControlStateValueOff, NSControlStateValueOn,
     NSControlTextEditingDelegate, NSEvent, NSEventModifierFlags, NSGridCell, NSGridCellPlacement, NSGridView,
     NSLineBreakMode, NSModalResponseOK, NSOpenPanel, NSPopUpButton, NSResponder, NSSecureTextField, NSStackView,
-    NSTabView, NSTabViewController, NSTabViewControllerTabStyle, NSTabViewItem, NSTextField, NSTextFieldDelegate,
-    NSUserInterfaceItemIdentification, NSView, NSViewController, NSWindow, NSWindowStyleMask, NSWindowToolbarStyle,
-    NSWorkspace,
+    NSTabView, NSTabViewController, NSTabViewControllerTabStyle, NSTabViewItem, NSTextAlignment, NSTextField,
+    NSTextFieldDelegate, NSUserInterfaceItemIdentification, NSView, NSViewController, NSWindow,
+    NSWindowCollectionBehavior, NSWindowStyleMask, NSWindowToolbarStyle, NSWorkspace,
 };
 use objc2_foundation::{
     NSArray, NSLocale, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRange, NSRect, NSSize, NSString, NSURL,
@@ -30,6 +30,8 @@ use crate::{assets, keys, library, output, recognize, updates, upload};
 
 const MARGIN: f64 = 24.0;
 const FIELD_WIDTH: f64 = 240.0;
+/// Наибольшая ширина содержимого окна, до которой его можно растянуть.
+const MAX_WIDTH: f64 = 1000.0;
 const SHORTCUT_WIDTH: f64 = 140.0;
 const KEYBOARD_SETTINGS_URL: &str = "x-apple.systempreferences:com.apple.Keyboard-Settings.extension";
 const FONT_SIZE: f64 = 13.0;
@@ -470,6 +472,21 @@ define_class!(
     struct Tabs;
 
     impl Tabs {
+        // Новая вкладка получает текущую ширину окна, иначе окно прыгает к ширине, с которой она создана.
+        #[unsafe(method(tabView:willSelectTabViewItem:))]
+        fn will_select(&self, tab_view: &NSTabView, item: Option<&NSTabViewItem>) {
+            let page = item.and_then(|item| item.viewController(self.mtm()));
+            if let (Some(page), Some(window)) = (page, self.view().window()) {
+                let width = window.contentView().map_or(0.0, |view| view.frame().size.width);
+                let height = page.preferredContentSize().height;
+                page.setPreferredContentSize(NSSize::new(width, height));
+                limit(&window, window.contentMinSize().width, height);
+            }
+            unsafe {
+                let _: () = msg_send![super(self), tabView: tab_view, willSelectTabViewItem: item];
+            }
+        }
+
         #[unsafe(method(tabView:didSelectTabViewItem:))]
         fn did_select(&self, tab_view: &NSTabView, item: Option<&NSTabViewItem>) {
             unsafe {
@@ -486,18 +503,21 @@ fn build_window(mtm: MainThreadMarker) -> Retained<NSWindow> {
     let last = settings::string(settings::SETTINGS_TAB).and_then(|t| t.parse::<isize>().ok()).unwrap_or(0);
     let tabs: Retained<Tabs> = unsafe { msg_send![Tabs::alloc(mtm), init] };
     tabs.setTabStyle(NSTabViewControllerTabStyle::Toolbar);
-    for (title, icon, view) in [
+    let pages = [
         ("General", assets::SLIDERS, general_tab(mtm, &controller)),
         ("Capture", assets::CAMERA, capture_tab(mtm, &controller)),
         ("Saving", assets::FOLDER_DOWN, saving_tab(mtm, &controller)),
         ("Editor", assets::SQUARE_PEN, editor_tab(mtm, &controller)),
         ("Upload", assets::CLOUD_UPLOAD, upload_tab(mtm, &controller)),
         ("Shortcuts", assets::KEYBOARD, shortcuts_tab(mtm, &controller)),
-    ] {
+    ];
+    // Все вкладки одной ширины, по самой широкой, высота у каждой своя.
+    let width = pages.iter().map(|(_, _, view)| view.frame().size.width).fold(0.0, f64::max);
+    for (title, icon, view) in pages {
         let page = NSViewController::new(mtm);
         page.setView(&view);
         // Иначе окно берёт размер по умолчанию и прижимает содержимое к низу.
-        page.setPreferredContentSize(view.frame().size);
+        page.setPreferredContentSize(NSSize::new(width, view.frame().size.height));
         page.setTitle(Some(&NSString::from_str(title)));
         let item = NSTabViewItem::tabViewItemWithViewController(&page);
         item.setImage(assets::icon(icon, 20.0).as_deref());
@@ -508,17 +528,34 @@ fn build_window(mtm: MainThreadMarker) -> Retained<NSWindow> {
     }
 
     let window = NSWindow::windowWithContentViewController(&tabs);
-    window.setStyleMask(NSWindowStyleMask::Titled | NSWindowStyleMask::Closable);
+    window.setStyleMask(NSWindowStyleMask::Titled | NSWindowStyleMask::Closable | NSWindowStyleMask::Resizable);
+    if let Some(page) = tabs
+        .tabViewItems()
+        .iter()
+        .nth(tabs.selectedTabViewItemIndex().max(0) as usize)
+        .and_then(|item| item.viewController(mtm))
+    {
+        limit(&window, width, page.preferredContentSize().height);
+    }
     window.setToolbarStyle(NSWindowToolbarStyle::Preference);
+    window.setCollectionBehavior(NSWindowCollectionBehavior::FullScreenNone);
     // Окно переиспользуется при следующем открытии, его держит WINDOW.
     unsafe { window.setReleasedWhenClosed(false) };
     window.center();
     window
 }
 
+/// Окно тянется только в ширину, от `min_width` до [`MAX_WIDTH`]. Высоту задаёт вкладка.
+fn limit(window: &NSWindow, min_width: f64, height: f64) {
+    window.setContentMinSize(NSSize::new(min_width, height));
+    window.setContentMaxSize(NSSize::new(MAX_WIDTH, height));
+}
+
 /// Строка таблицы настроек.
 enum Row {
     Field(&'static str, Retained<NSView>),
+    /// Строка, контрол которой растягивается вместе с окном.
+    Wide(&'static str, Retained<NSView>),
     /// Заголовок группы строк.
     Heading(&'static str),
     Note(Retained<NSView>),
@@ -625,15 +662,16 @@ fn saving_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView
     };
     directory.setImage(assets::icon(assets::FOLDER_OPEN, 14.0).as_deref());
     directory.setImagePosition(NSCellImagePosition::ImageLeading);
+    directory.setAlignment(NSTextAlignment::Left);
     directory.setLineBreakMode(NSLineBreakMode::ByTruncatingMiddle);
     directory.setFont(Some(&assets::font(FONT_SIZE)));
-    directory.widthAnchor().constraintEqualToConstant(FIELD_WIDTH).setActive(true);
+    directory.widthAnchor().constraintGreaterThanOrEqualToConstant(FIELD_WIDTH).setActive(true);
     let _ = controller.ivars().directory.set(directory.clone());
 
     let file_name = NSTextField::textFieldWithString(&NSString::from_str(&current.file_name_template), mtm);
     file_name.setPlaceholderString(Some(&NSString::from_str(DEFAULT_FILE_NAME_TEMPLATE)));
     file_name.setFont(Some(&assets::font(FONT_SIZE)));
-    file_name.widthAnchor().constraintEqualToConstant(FIELD_WIDTH).setActive(true);
+    file_name.widthAnchor().constraintGreaterThanOrEqualToConstant(FIELD_WIDTH).setActive(true);
     // Делегат не удерживается полем, контроллер живёт в CONTROLLER.
     unsafe { file_name.setDelegate(Some(ProtocolObject::from_ref(controller))) };
     let tokens = label(mtm, "{date} {time} {mode} {app}");
@@ -652,8 +690,8 @@ fn saving_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView
         mtm,
         &[
             Row::Heading("Files"),
-            Row::Field("Screenshots folder", view(&directory)),
-            Row::Field("File name", view(&file_name)),
+            Row::Wide("Screenshots folder", view(&directory)),
+            Row::Wide("File name", view(&file_name)),
             Row::Field("", view(&tokens)),
             Row::Field("Format", inline(mtm, &formats)),
             Row::Field("Retina screenshots", view(&downscale)),
@@ -661,7 +699,7 @@ fn saving_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView
             Row::Field("", view(&library_on)),
             Row::Field("Remember up to", inline(mtm, &library_limit)),
             Row::Heading("Text recognition"),
-            Row::Field("Language", view(&language)),
+            Row::Wide("Language", view(&language)),
             Row::Field("", view(&single_line)),
         ],
     )
@@ -708,7 +746,7 @@ fn upload_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView
         field.setPlaceholderString(Some(&NSString::from_str(placeholder)));
         field.setFont(Some(&assets::font(FONT_SIZE)));
         field.setIdentifier(Some(&NSString::from_str(id)));
-        field.widthAnchor().constraintEqualToConstant(FIELD_WIDTH * 1.5).setActive(true);
+        field.widthAnchor().constraintGreaterThanOrEqualToConstant(FIELD_WIDTH * 1.5).setActive(true);
         // Делегат не удерживается полем, контроллер живёт в CONTROLLER.
         unsafe { field.setDelegate(Some(ProtocolObject::from_ref(controller))) };
         view(&field)
@@ -751,18 +789,18 @@ fn upload_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView
         mtm,
         &[
             Row::Heading("Storage"),
-            Row::Field("Endpoint", endpoint),
-            Row::Field("Region", region),
-            Row::Field("Bucket", bucket),
-            Row::Field("Path prefix", prefix),
+            Row::Wide("Endpoint", endpoint),
+            Row::Wide("Region", region),
+            Row::Wide("Bucket", bucket),
+            Row::Wide("Path prefix", prefix),
             Row::Heading("Keys"),
-            Row::Field("Access key", access),
-            Row::Field("Secret key", secret),
+            Row::Wide("Access key", access),
+            Row::Wide("Secret key", secret),
             Row::Field("", inline(mtm, &[view(&test), view(&status)])),
             Row::Heading("Links"),
             Row::Field("Copy after upload", inline(mtm, &links)),
             Row::Field("Temporary links last", inline(mtm, &expiry)),
-            Row::Field("Public address", public_url),
+            Row::Wide("Public address", public_url),
         ],
     )
 }
@@ -808,8 +846,16 @@ fn grid(mtm: MainThreadMarker, rows: &[Row]) -> Retained<NSView> {
         NSView::alloc(mtm),
         NSRect::new(NSPoint::ZERO, NSSize::new(size.width + 2.0 * MARGIN, size.height + 2.0 * MARGIN)),
     );
-    grid.setFrame(NSRect::new(NSPoint::new(MARGIN, MARGIN), size));
+    grid.setTranslatesAutoresizingMaskIntoConstraints(false);
     container.addSubview(&grid);
+    // Таблица прижата к верху и тянется в ширину вместе с окном.
+    grid.leadingAnchor().constraintEqualToAnchor_constant(&container.leadingAnchor(), MARGIN).setActive(true);
+    grid.trailingAnchor().constraintEqualToAnchor_constant(&container.trailingAnchor(), -MARGIN).setActive(true);
+    grid.topAnchor().constraintEqualToAnchor_constant(&container.topAnchor(), MARGIN).setActive(true);
+    container
+        .bottomAnchor()
+        .constraintGreaterThanOrEqualToAnchor_constant(&grid.bottomAnchor(), MARGIN)
+        .setActive(true);
     container
 }
 
@@ -831,12 +877,17 @@ fn side_by_side(mtm: MainThreadMarker, left: &NSGridView, right: &NSGridView) ->
 
 /// Подписи справа налево к контролам, заголовки и пояснения во всю ширину.
 fn table(mtm: MainThreadMarker, rows: &[Row]) -> Retained<NSGridView> {
+    let mut label_width: f64 = 0.0;
     let cells: Vec<_> = rows
         .iter()
         .map(|row| {
             let empty = NSGridCell::emptyContentView(mtm);
             let pair = match row {
-                Row::Field(title, control) => [view(&label(mtm, title)), control.clone()],
+                Row::Field(title, control) | Row::Wide(title, control) => {
+                    let title = label(mtm, title);
+                    label_width = label_width.max(title.fittingSize().width);
+                    [view(&title), control.clone()]
+                }
                 Row::Heading(title) => {
                     let heading = label(mtm, title);
                     heading.setFont(Some(&assets::semibold_font(FONT_SIZE)));
@@ -848,13 +899,23 @@ fn table(mtm: MainThreadMarker, rows: &[Row]) -> Retained<NSGridView> {
         })
         .collect();
     let grid = NSGridView::gridViewWithViews(&NSArray::from_retained_slice(&cells), mtm);
+    // Иначе лишняя ширина окна достаётся подписям, а не контролам. В таблице из одних пояснений
+    // подписей нет, и нулевая колонка сжимает окно.
+    if label_width > 0.0 {
+        grid.columnAtIndex(0).setWidth(label_width);
+    }
     grid.setRowSpacing(12.0);
     grid.setColumnSpacing(12.0);
     grid.setYPlacement(NSGridCellPlacement::Center);
     grid.columnAtIndex(0).setXPlacement(NSGridCellPlacement::Trailing);
     for (index, row) in rows.iter().enumerate() {
-        if let Row::Field(..) = row {
-            continue;
+        match row {
+            Row::Field(..) => continue,
+            Row::Wide(..) => {
+                grid.cellAtColumnIndex_rowIndex(1, index as isize).setXPlacement(NSGridCellPlacement::Fill);
+                continue;
+            }
+            Row::Heading(_) | Row::Note(_) => {}
         }
         grid.mergeCellsInHorizontalRange_verticalRange(NSRange::new(0, 2), NSRange::new(index, 1));
         grid.cellAtColumnIndex_rowIndex(0, index as isize).setXPlacement(NSGridCellPlacement::Leading);
