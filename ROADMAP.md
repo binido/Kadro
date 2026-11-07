@@ -8,7 +8,7 @@ The feature list comes from the gap between Kadro and Shottr 1.9.3, read from Sh
 
 - `0.MINOR.0` adds one large feature from this plan.
 - `0.MINOR.PATCH` fixes bugs in a released minor version and adds no features.
-- `1.0.0` ships when every version below up to 0.13 is released and the 1.0 checklist passes.
+- `1.0.0` ships when every version below up to 0.14 is released and the 1.0 checklist passes.
 
 To release a version:
 
@@ -47,6 +47,7 @@ A version is done when all of these hold:
 | 0.11 | Upload and share links | Done |
 | 0.12 | Screenshot library | Done |
 | 0.13 | URL scheme and app behavior | Done |
+| 0.14 | Visual polish | In progress |
 | 1.0 | Complete, polished release | Planned |
 
 Update the status column in the PR that ships each version.
@@ -286,13 +287,23 @@ Features:
 
 Done when: every documented URL works, and the URL list is in README.
 
+## 0.14 — Visual polish
+
+**Goal:** fix what looks or feels off before 1.0. The list grows from manual testing.
+
+Features:
+
+- **Settings window fits a 13-inch screen.** General is split into General, Capture and Saving, groups get headings instead of separator lines, Shortcuts shows two columns, and the window remembers the last tab. Every tab is under 600 points tall.
+
+Done when: every item in this section is fixed and checked by hand.
+
 ## 1.0 — Complete release
 
 **Goal:** everything above, finished and dependable.
 
 Checklist:
 
-- Every version from 0.2 to 0.13 is released.
+- Every version from 0.2 to 0.14 is released.
 - Full manual pass of every feature on a single display and on two displays with different scales.
 - Performance budgets hold: idle CPU 0%, idle memory under 20 MB before the editor is first opened and under 30 MB after, capture to clipboard under 300 ms on a 5K display.
 - No leak growth across 100 captures, editor sessions and pins.

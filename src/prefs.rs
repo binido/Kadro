@@ -1,4 +1,4 @@
-//! Окно настроек: общие параметры снимков и сочетания клавиш.
+//! Окно настроек: вкладки с параметрами снимков, редактора, загрузки и сочетаниями клавиш.
 
 use std::cell::{Cell, OnceCell, RefCell};
 
@@ -6,13 +6,13 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject, Sel};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSAlert, NSAlertFirstButtonReturn, NSApplication, NSBeep, NSBezelStyle, NSBox, NSBoxType, NSButton,
-    NSCellImagePosition, NSColor, NSColorSpace, NSColorWell, NSColorWellStyle, NSControl, NSControlStateValueOff,
-    NSControlStateValueOn, NSControlTextEditingDelegate, NSEvent, NSEventModifierFlags, NSGridCell,
-    NSGridCellPlacement, NSGridView, NSLineBreakMode, NSModalResponseOK, NSOpenPanel, NSPopUpButton, NSResponder,
-    NSSecureTextField, NSStackView, NSTabViewController, NSTabViewControllerTabStyle, NSTabViewItem, NSTextField,
-    NSTextFieldDelegate, NSUserInterfaceItemIdentification, NSView, NSViewController, NSWindow, NSWindowStyleMask,
-    NSWindowToolbarStyle, NSWorkspace,
+    NSAlert, NSAlertFirstButtonReturn, NSApplication, NSBeep, NSBezelStyle, NSButton, NSCellImagePosition, NSColor,
+    NSColorSpace, NSColorWell, NSColorWellStyle, NSControl, NSControlStateValueOff, NSControlStateValueOn,
+    NSControlTextEditingDelegate, NSEvent, NSEventModifierFlags, NSGridCell, NSGridCellPlacement, NSGridView,
+    NSLineBreakMode, NSModalResponseOK, NSOpenPanel, NSPopUpButton, NSResponder, NSSecureTextField, NSStackView,
+    NSTabView, NSTabViewController, NSTabViewControllerTabStyle, NSTabViewItem, NSTextField, NSTextFieldDelegate,
+    NSUserInterfaceItemIdentification, NSView, NSViewController, NSWindow, NSWindowStyleMask, NSWindowToolbarStyle,
+    NSWorkspace,
 };
 use objc2_foundation::{
     NSArray, NSLocale, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRange, NSRect, NSSize, NSString, NSURL,
@@ -318,7 +318,7 @@ impl Controller {
 struct ShortcutIvars {
     action: Action,
     recording: Cell<bool>,
-    /// Подпись под таблицей, куда пишется, почему сочетание не подошло.
+    /// Подпись под таблицей с подсказкой или причиной, почему сочетание не подошло.
     message: Retained<NSTextField>,
 }
 
@@ -397,7 +397,18 @@ impl ShortcutButton {
     }
 
     fn show_message(&self, text: &str) {
-        self.ivars().message.setStringValue(&NSString::from_str(text));
+        Self::show(&self.ivars().message, text);
+    }
+
+    /// Пишет под таблицей, почему сочетание не подошло, или подсказку, если `text` пустой.
+    fn show(message: &NSTextField, text: &str) {
+        let (text, color) = if text.is_empty() {
+            ("Click a shortcut and press new keys. ⌫ clears it, Esc cancels.", NSColor::secondaryLabelColor())
+        } else {
+            (text, NSColor::systemRedColor())
+        };
+        message.setStringValue(&NSString::from_str(text));
+        message.setTextColor(Some(&color));
     }
 
     fn stop_recording(&self) {
@@ -452,12 +463,33 @@ pub fn show(mtm: MainThreadMarker) {
     window.makeKeyAndOrderFront(None);
 }
 
+define_class!(
+    /// Вкладки настроек, которые запоминают последнюю открытую.
+    #[unsafe(super(NSTabViewController, NSViewController, NSResponder, NSObject))]
+    #[thread_kind = MainThreadOnly]
+    struct Tabs;
+
+    impl Tabs {
+        #[unsafe(method(tabView:didSelectTabViewItem:))]
+        fn did_select(&self, tab_view: &NSTabView, item: Option<&NSTabViewItem>) {
+            unsafe {
+                let _: () = msg_send![super(self), tabView: tab_view, didSelectTabViewItem: item];
+            }
+            settings::set_string(settings::SETTINGS_TAB, &self.selectedTabViewItemIndex().to_string());
+        }
+    }
+);
+
 fn build_window(mtm: MainThreadMarker) -> Retained<NSWindow> {
     let controller = CONTROLLER.with(|c| c.get_or_init(|| Controller::new(mtm)).clone());
-    let tabs = NSTabViewController::new(mtm);
+    // Читается до вкладок, потому что первая добавленная вкладка выбирается и записывает свой номер.
+    let last = settings::string(settings::SETTINGS_TAB).and_then(|t| t.parse::<isize>().ok()).unwrap_or(0);
+    let tabs: Retained<Tabs> = unsafe { msg_send![Tabs::alloc(mtm), init] };
     tabs.setTabStyle(NSTabViewControllerTabStyle::Toolbar);
     for (title, icon, view) in [
         ("General", assets::SLIDERS, general_tab(mtm, &controller)),
+        ("Capture", assets::CAMERA, capture_tab(mtm, &controller)),
+        ("Saving", assets::FOLDER_DOWN, saving_tab(mtm, &controller)),
         ("Editor", assets::SQUARE_PEN, editor_tab(mtm, &controller)),
         ("Upload", assets::CLOUD_UPLOAD, upload_tab(mtm, &controller)),
         ("Shortcuts", assets::KEYBOARD, shortcuts_tab(mtm, &controller)),
@@ -470,6 +502,9 @@ fn build_window(mtm: MainThreadMarker) -> Retained<NSWindow> {
         let item = NSTabViewItem::tabViewItemWithViewController(&page);
         item.setImage(assets::icon(icon, 20.0).as_deref());
         tabs.addTabViewItem(&item);
+    }
+    if (0..tabs.tabViewItems().len() as isize).contains(&last) {
+        tabs.setSelectedTabViewItemIndex(last);
     }
 
     let window = NSWindow::windowWithContentViewController(&tabs);
@@ -484,11 +519,100 @@ fn build_window(mtm: MainThreadMarker) -> Retained<NSWindow> {
 /// Строка таблицы настроек.
 enum Row {
     Field(&'static str, Retained<NSView>),
-    Separator,
+    /// Заголовок группы строк.
+    Heading(&'static str),
     Note(Retained<NSView>),
 }
 
+/// Запуск, строка меню, ссылки и обновления.
 fn general_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView> {
+    let current = Settings::load();
+    let login = checkbox(mtm, "Launch at login", launches_at_login(), controller, sel!(toggleLaunchAtLogin:));
+    let hide_icon = checkbox(mtm, "Hide the menu bar icon", current.hide_icon, controller, sel!(toggleHideIcon:));
+    let hide_hint = label(mtm, "Open Kadro again from Applications to get back to Settings.");
+    hide_hint.setTextColor(Some(&NSColor::secondaryLabelColor()));
+    let links = radios(mtm, current.links, controller, sel!(changeLinkPolicy:));
+    let updates_on =
+        checkbox(mtm, "Check for updates once a day", current.check_updates, controller, sel!(toggleCheckUpdates:));
+    let check_now = unsafe {
+        NSButton::buttonWithTitle_target_action(
+            ns_string!("Check Now"),
+            Some(controller),
+            Some(sel!(checkUpdatesNow:)),
+            mtm,
+        )
+    };
+    grid(
+        mtm,
+        &[
+            Row::Field("Autostart", view(&login)),
+            Row::Field("Menu bar", view(&hide_icon)),
+            Row::Field("", view(&hide_hint)),
+            Row::Field("kadro:// links", inline(mtm, &links)),
+            Row::Field("Updates", inline(mtm, &[view(&updates_on), view(&check_now)])),
+        ],
+    )
+}
+
+/// Что происходит после снимка, что попадает в кадр и снимок с прокруткой.
+fn capture_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView> {
+    let current = Settings::load();
+    let after_capture = radios(mtm, current.after_capture, controller, sel!(changeAfterCapture:));
+    if let Some(nothing) = after_capture.last().and_then(|v| v.clone().downcast::<NSButton>().ok()) {
+        let _ = controller.ivars().show_nothing.set(nothing);
+    }
+    let copy = checkbox(mtm, "Copy", current.copy_to_clipboard, controller, sel!(toggleDestination:));
+    let save = checkbox(mtm, "Save", current.save_to_file, controller, sel!(toggleDestination:));
+    let hiding = radios(mtm, current.preview_hiding, controller, sel!(changePreviewHiding:));
+    let confirmation = radios(mtm, current.confirmation, controller, sel!(changeConfirmation:));
+    let _ = controller.ivars().copy.set(copy.clone());
+    let _ = controller.ivars().save.set(save.clone());
+    controller.update_destinations();
+
+    let cursor = radios(mtm, current.cursor, controller, sel!(changeCursor:));
+    let mut window_background = radios(mtm, current.window_background, controller, sel!(changeWindowBackground:));
+    let window_color =
+        NSColorWell::initWithFrame(NSColorWell::alloc(mtm), NSRect::new(NSPoint::ZERO, NSSize::new(38.0, 24.0)));
+    window_color.setColorWellStyle(NSColorWellStyle::Minimal);
+    let c = current.window_color;
+    window_color.setColor(&NSColor::colorWithSRGBRed_green_blue_alpha(c.red, c.green, c.blue, 1.0));
+    unsafe {
+        window_color.setTarget(Some(controller));
+        window_color.setAction(Some(sel!(changeWindowColor:)));
+    }
+    window_background.push(view(&window_color));
+
+    let scroll_limit = radios(mtm, current.scroll_limit, controller, sel!(changeScrollLimit:));
+    let scroll_speed = radios(mtm, current.scroll_speed, controller, sel!(changeScrollSpeed:));
+    let scroll_reverse = checkbox(
+        mtm,
+        "Reverse direction, for apps that scroll the other way",
+        current.scroll_reverse,
+        controller,
+        sel!(toggleScrollReverse:),
+    );
+
+    grid(
+        mtm,
+        &[
+            Row::Heading("After capture"),
+            Row::Field("Show", inline(mtm, &after_capture)),
+            Row::Field("Screenshot goes to", inline(mtm, &[view(&copy), view(&save)])),
+            Row::Field("Hide preview", inline(mtm, &hiding)),
+            Row::Field("Confirm without preview", inline(mtm, &confirmation)),
+            Row::Heading("Image"),
+            Row::Field("Cursor", inline(mtm, &cursor)),
+            Row::Field("Behind windows", inline(mtm, &window_background)),
+            Row::Heading("Scrolling capture"),
+            Row::Field("Capture up to", inline(mtm, &scroll_limit)),
+            Row::Field("Scroll speed", inline(mtm, &scroll_speed)),
+            Row::Field("", view(&scroll_reverse)),
+        ],
+    )
+}
+
+/// Куда и как сохраняются снимки, библиотека и распознавание текста.
+fn saving_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView> {
     let current = Settings::load();
 
     let directory = unsafe {
@@ -506,20 +630,6 @@ fn general_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSVie
     directory.widthAnchor().constraintEqualToConstant(FIELD_WIDTH).setActive(true);
     let _ = controller.ivars().directory.set(directory.clone());
 
-    let formats = radios(mtm, current.format, controller, sel!(changeFormat:));
-    let cursor = radios(mtm, current.cursor, controller, sel!(changeCursor:));
-    let mut window_background = radios(mtm, current.window_background, controller, sel!(changeWindowBackground:));
-    let window_color =
-        NSColorWell::initWithFrame(NSColorWell::alloc(mtm), NSRect::new(NSPoint::ZERO, NSSize::new(38.0, 24.0)));
-    window_color.setColorWellStyle(NSColorWellStyle::Minimal);
-    let c = current.window_color;
-    window_color.setColor(&NSColor::colorWithSRGBRed_green_blue_alpha(c.red, c.green, c.blue, 1.0));
-    unsafe {
-        window_color.setTarget(Some(controller));
-        window_color.setAction(Some(sel!(changeWindowColor:)));
-    }
-    window_background.push(view(&window_color));
-
     let file_name = NSTextField::textFieldWithString(&NSString::from_str(&current.file_name_template), mtm);
     file_name.setPlaceholderString(Some(&NSString::from_str(DEFAULT_FILE_NAME_TEMPLATE)));
     file_name.setFont(Some(&assets::font(FONT_SIZE)));
@@ -528,85 +638,32 @@ fn general_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSVie
     unsafe { file_name.setDelegate(Some(ProtocolObject::from_ref(controller))) };
     let tokens = label(mtm, "{date} {time} {mode} {app}");
     tokens.setTextColor(Some(&NSColor::secondaryLabelColor()));
-
-    let after_capture = radios(mtm, current.after_capture, controller, sel!(changeAfterCapture:));
-    if let Some(nothing) = after_capture.last().and_then(|v| v.clone().downcast::<NSButton>().ok()) {
-        let _ = controller.ivars().show_nothing.set(nothing);
-    }
-    let copy = checkbox(mtm, "Copy", current.copy_to_clipboard, controller, sel!(toggleDestination:));
-    let save = checkbox(mtm, "Save", current.save_to_file, controller, sel!(toggleDestination:));
-    let hiding = radios(mtm, current.preview_hiding, controller, sel!(changePreviewHiding:));
-    let confirmation = radios(mtm, current.confirmation, controller, sel!(changeConfirmation:));
-    let _ = controller.ivars().copy.set(copy.clone());
-    let _ = controller.ivars().save.set(save.clone());
-    controller.update_destinations();
-
+    let formats = radios(mtm, current.format, controller, sel!(changeFormat:));
     let downscale =
         checkbox(mtm, "Downscale to 1× when saving", current.downscale_retina, controller, sel!(toggleDownscale:));
-    let login = checkbox(mtm, "Launch at login", launches_at_login(), controller, sel!(toggleLaunchAtLogin:));
-    let hide_icon = checkbox(mtm, "Hide the menu bar icon", current.hide_icon, controller, sel!(toggleHideIcon:));
-    let hide_hint = label(mtm, "Open Kadro again from Applications to get back to Settings.");
-    hide_hint.setTextColor(Some(&NSColor::secondaryLabelColor()));
-    let links = radios(mtm, current.links, controller, sel!(changeLinkPolicy:));
-    let updates_on =
-        checkbox(mtm, "Check for updates once a day", current.check_updates, controller, sel!(toggleCheckUpdates:));
-    let check_now = unsafe {
-        NSButton::buttonWithTitle_target_action(
-            ns_string!("Check Now"),
-            Some(controller),
-            Some(sel!(checkUpdatesNow:)),
-            mtm,
-        )
-    };
-    let language = recognition_languages(mtm, current.recognition_language.as_deref(), controller);
-    let single_line = checkbox(mtm, "Join lines into one", current.single_line, controller, sel!(toggleSingleLine:));
+
     let library_on =
         checkbox(mtm, "Keep a library of saved screenshots", current.library, controller, sel!(toggleLibrary:));
     let library_limit = radios(mtm, current.library_limit, controller, sel!(changeLibraryLimit:));
-    let scroll_limit = radios(mtm, current.scroll_limit, controller, sel!(changeScrollLimit:));
-    let scroll_speed = radios(mtm, current.scroll_speed, controller, sel!(changeScrollSpeed:));
-    let scroll_reverse = checkbox(
-        mtm,
-        "Reverse direction, for apps that scroll the other way",
-        current.scroll_reverse,
-        controller,
-        sel!(toggleScrollReverse:),
-    );
+    let language = recognition_languages(mtm, current.recognition_language.as_deref(), controller);
+    let single_line = checkbox(mtm, "Join lines into one", current.single_line, controller, sel!(toggleSingleLine:));
 
     grid(
         mtm,
         &[
+            Row::Heading("Files"),
             Row::Field("Screenshots folder", view(&directory)),
             Row::Field("File name", view(&file_name)),
             Row::Field("", view(&tokens)),
-            Row::Field("Save format", inline(mtm, &formats)),
-            Row::Field("Resize retina screenshots", view(&downscale)),
-            Row::Separator,
-            Row::Field("Cursor in screenshots", inline(mtm, &cursor)),
-            Row::Field("Behind windows", inline(mtm, &window_background)),
-            Row::Separator,
-            Row::Field("Recognize text in", view(&language)),
-            Row::Field("", view(&single_line)),
-            Row::Separator,
-            Row::Field("Library", view(&library_on)),
+            Row::Field("Format", inline(mtm, &formats)),
+            Row::Field("Retina screenshots", view(&downscale)),
+            Row::Heading("Library"),
+            Row::Field("", view(&library_on)),
             Row::Field("Remember up to", inline(mtm, &library_limit)),
-            Row::Separator,
-            Row::Field("Scrolling capture up to", inline(mtm, &scroll_limit)),
-            Row::Field("Scroll speed", inline(mtm, &scroll_speed)),
-            Row::Field("", view(&scroll_reverse)),
-            Row::Separator,
-            Row::Field("Autostart", view(&login)),
-            Row::Field("Menu bar", view(&hide_icon)),
-            Row::Field("", view(&hide_hint)),
-            Row::Field("kadro:// links", inline(mtm, &links)),
-            Row::Field("Updates", inline(mtm, &[view(&updates_on), view(&check_now)])),
-            Row::Separator,
-            Row::Field("Show after capture", inline(mtm, &after_capture)),
-            Row::Field("After screenshot", inline(mtm, &[view(&copy), view(&save)])),
-            Row::Field("Hide preview", inline(mtm, &hiding)),
-            Row::Field("Confirm without preview", inline(mtm, &confirmation)),
+            Row::Heading("Text recognition"),
+            Row::Field("Language", view(&language)),
+            Row::Field("", view(&single_line)),
         ],
-        Columns::Fitted,
     )
 }
 
@@ -629,12 +686,10 @@ fn editor_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView
         &[
             Row::Field("Esc in the editor", inline(mtm, &esc)),
             Row::Field("Open screenshots", inline(mtm, &zoom)),
-            Row::Separator,
             Row::Field("Window", view(&on_top)),
             Row::Field("Zoom", view(&scroll)),
             Row::Field("", view(&scroll_hint)),
         ],
-        Columns::Fitted,
     )
 }
 
@@ -675,7 +730,7 @@ fn upload_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView
     let expiry = radios(mtm, current.expiry, controller, sel!(changeLinkExpiry:));
     let public_url = field(
         &text(settings::UPLOAD_PUBLIC_URL),
-        "https://img.example.com, empty for the bucket's own address",
+        "https://img.example.com, optional",
         settings::UPLOAD_PUBLIC_URL,
         false,
     );
@@ -690,33 +745,30 @@ fn upload_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView
     let status = label(mtm, "");
     status.setTextColor(Some(&NSColor::secondaryLabelColor()));
     status.setLineBreakMode(NSLineBreakMode::ByWordWrapping);
-    status.setPreferredMaxLayoutWidth(FIELD_WIDTH * 1.5);
+    status.setPreferredMaxLayoutWidth(FIELD_WIDTH);
     let _ = controller.ivars().test_status.set(status.clone());
     grid(
         mtm,
         &[
+            Row::Heading("Storage"),
             Row::Field("Endpoint", endpoint),
             Row::Field("Region", region),
             Row::Field("Bucket", bucket),
             Row::Field("Path prefix", prefix),
-            Row::Separator,
+            Row::Heading("Keys"),
             Row::Field("Access key", access),
             Row::Field("Secret key", secret),
-            Row::Separator,
+            Row::Field("", inline(mtm, &[view(&test), view(&status)])),
+            Row::Heading("Links"),
             Row::Field("Copy after upload", inline(mtm, &links)),
             Row::Field("Temporary links last", inline(mtm, &expiry)),
             Row::Field("Public address", public_url),
-            Row::Separator,
-            Row::Field("", view(&test)),
-            Row::Field("", view(&status)),
         ],
-        Columns::Fitted,
     )
 }
 
 fn shortcuts_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView> {
-    let title = label(mtm, "Use ⇧⌘3 and ⇧⌘4 for Kadro");
-    title.setFont(Some(&assets::semibold_font(FONT_SIZE)));
+    let how = label(mtm, "To use ⇧⌘3 and ⇧⌘4, turn them off in Keyboard Shortcuts → Screenshots.");
     let open_settings = unsafe {
         NSButton::buttonWithTitle_target_action(
             ns_string!("Open Keyboard Settings"),
@@ -728,48 +780,67 @@ fn shortcuts_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSV
     open_settings.setFont(Some(&assets::font(FONT_SIZE)));
 
     let message = label(mtm, "");
-    message.setTextColor(Some(&NSColor::systemRedColor()));
-    let hint = label(mtm, "Click a shortcut and press new keys. ⌫ clears it, Esc cancels.");
-    hint.setTextColor(Some(&NSColor::secondaryLabelColor()));
-
-    let mut rows = vec![
-        Row::Note(view(&title)),
-        Row::Note(view(&label(mtm, "1. Open System Settings → Keyboard → Keyboard Shortcuts."))),
-        Row::Note(view(&open_settings)),
-        Row::Note(view(&label(mtm, "2. In Screenshots, turn off the shortcuts you want to reuse."))),
-        Row::Note(view(&label(mtm, "3. Record them below, e.g. ⇧⌘3 for full screen, ⇧⌘4 for region."))),
-        Row::Separator,
-    ];
-    rows.extend(Action::ALL.iter().map(|action| {
+    let shortcut = |action: &Action| {
         let button = ShortcutButton::new(mtm, *action, &message);
         button.widthAnchor().constraintEqualToConstant(SHORTCUT_WIDTH).setActive(true);
         Row::Field(action.title(), view(&button))
-    }));
-    rows.extend([Row::Separator, Row::Note(view(&hint)), Row::Note(view(&message))]);
-    grid(mtm, &rows, Columns::Balanced)
+    };
+    let group = |title, actions: &[Action]| {
+        let rows: Vec<_> = std::iter::once(Row::Heading(title)).chain(actions.iter().map(&shortcut)).collect();
+        table(mtm, &rows)
+    };
+    // Первые семь действий снимают экран, остальные работают с готовыми снимками.
+    let (capture, screenshots) = Action::ALL.split_at(7);
+    let columns = side_by_side(mtm, &group("Capture", capture), &group("Screenshots", screenshots));
+    let rows = grid(
+        mtm,
+        &[Row::Note(view(&how)), Row::Note(view(&open_settings)), Row::Note(columns), Row::Note(view(&message))],
+    );
+    ShortcutButton::show(&message, "");
+    rows
 }
 
-/// Ширина колонок таблицы настроек.
-#[derive(Clone, Copy)]
-enum Columns {
-    /// По содержимому.
-    Fitted,
-    /// Поровну, чтобы граница подписей и контролов шла по центру окна.
-    Balanced,
+/// Таблица настроек с отступами до краёв окна.
+fn grid(mtm: MainThreadMarker, rows: &[Row]) -> Retained<NSView> {
+    let grid = table(mtm, rows);
+    let size = grid.fittingSize();
+    let container = NSView::initWithFrame(
+        NSView::alloc(mtm),
+        NSRect::new(NSPoint::ZERO, NSSize::new(size.width + 2.0 * MARGIN, size.height + 2.0 * MARGIN)),
+    );
+    grid.setFrame(NSRect::new(NSPoint::new(MARGIN, MARGIN), size));
+    container.addSubview(&grid);
+    container
 }
 
-/// Таблица настроек: подписи справа налево к контролам, разделители и пояснения во всю ширину.
-fn grid(mtm: MainThreadMarker, rows: &[Row], columns: Columns) -> Retained<NSView> {
+/// Две таблицы рядом, выровненные по верху.
+fn side_by_side(mtm: MainThreadMarker, left: &NSGridView, right: &NSGridView) -> Retained<NSView> {
+    const GAP: f64 = 40.0;
+    let (l, r) = (left.fittingSize(), right.fittingSize());
+    let size = NSSize::new(l.width + GAP + r.width, l.height.max(r.height));
+    // Рамки ставятся вручную. В стеке короткая таблица растягивается до высоты длинной и разводит строки.
+    let pair = NSView::initWithFrame(NSView::alloc(mtm), NSRect::new(NSPoint::ZERO, size));
+    left.setFrame(NSRect::new(NSPoint::new(0.0, size.height - l.height), l));
+    right.setFrame(NSRect::new(NSPoint::new(l.width + GAP, size.height - r.height), r));
+    pair.addSubview(left);
+    pair.addSubview(right);
+    pair.widthAnchor().constraintEqualToConstant(size.width).setActive(true);
+    pair.heightAnchor().constraintEqualToConstant(size.height).setActive(true);
+    pair
+}
+
+/// Подписи справа налево к контролам, заголовки и пояснения во всю ширину.
+fn table(mtm: MainThreadMarker, rows: &[Row]) -> Retained<NSGridView> {
     let cells: Vec<_> = rows
         .iter()
         .map(|row| {
             let empty = NSGridCell::emptyContentView(mtm);
             let pair = match row {
                 Row::Field(title, control) => [view(&label(mtm, title)), control.clone()],
-                Row::Separator => {
-                    let line = NSBox::new(mtm);
-                    line.setBoxType(NSBoxType::Separator);
-                    [view(&line), empty]
+                Row::Heading(title) => {
+                    let heading = label(mtm, title);
+                    heading.setFont(Some(&assets::semibold_font(FONT_SIZE)));
+                    [view(&heading), empty]
                 }
                 Row::Note(note) => [note.clone(), empty],
             };
@@ -782,34 +853,17 @@ fn grid(mtm: MainThreadMarker, rows: &[Row], columns: Columns) -> Retained<NSVie
     grid.setYPlacement(NSGridCellPlacement::Center);
     grid.columnAtIndex(0).setXPlacement(NSGridCellPlacement::Trailing);
     for (index, row) in rows.iter().enumerate() {
-        let placement = match row {
-            Row::Field(..) => continue,
-            Row::Separator => NSGridCellPlacement::Fill,
-            Row::Note(_) => NSGridCellPlacement::Leading,
-        };
+        if let Row::Field(..) = row {
+            continue;
+        }
         grid.mergeCellsInHorizontalRange_verticalRange(NSRange::new(0, 2), NSRange::new(index, 1));
-        grid.cellAtColumnIndex_rowIndex(0, index as isize).setXPlacement(placement);
-        if let Row::Separator = row {
-            let separator = grid.rowAtIndex(index as isize);
-            separator.setTopPadding(4.0);
-            separator.setBottomPadding(4.0);
+        grid.cellAtColumnIndex_rowIndex(0, index as isize).setXPlacement(NSGridCellPlacement::Leading);
+        if let (Row::Heading(_), 1..) = (row, index) {
+            grid.rowAtIndex(index as isize).setTopPadding(10.0);
         }
     }
 
-    if let Columns::Balanced = columns {
-        let half = (grid.fittingSize().width - grid.columnSpacing()) / 2.0;
-        grid.columnAtIndex(0).setWidth(half);
-        grid.columnAtIndex(1).setWidth(half);
-    }
-
-    let size = grid.fittingSize();
-    let container = NSView::initWithFrame(
-        NSView::alloc(mtm),
-        NSRect::new(NSPoint::ZERO, NSSize::new(size.width + 2.0 * MARGIN, size.height + 2.0 * MARGIN)),
-    );
-    grid.setFrame(NSRect::new(NSPoint::new(MARGIN, MARGIN), size));
-    container.addSubview(&grid);
-    container
+    grid
 }
 
 /// Контролы в одну строку, как Copy и Save.

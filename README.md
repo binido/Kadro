@@ -106,18 +106,26 @@ A compact native preferences window uses Space Grotesk typography and Lucide ico
 
 **General**
 
-- Screenshots folder, file name template, save format, Retina downscaling
-- Cursor in screenshots
-- What is behind captured windows: no shadow, transparent, wallpaper, colour
-- Text recognition language, joining recognized lines into one
-- Scrolling capture height limit, scroll speed, reversed direction
-- Library on or off, how many screenshots it remembers
-- Hide the menu bar icon, kadro:// links (off, ask, allow), daily update check
 - Launch at login
+- Hide the menu bar icon
+- kadro:// links: off, ask, allow
+- Daily update check, Check Now
+
+**Capture**
+
 - Show after capture: preview, editor, nothing
-- After screenshot: copy, save
+- Where the screenshot goes: copy, save
 - Hide preview automatically or manually
 - Confirmation without preview: pop-up, notification, none
+- Cursor in screenshots
+- What is behind captured windows: no shadow, transparent, wallpaper, colour
+- Scrolling capture height limit, scroll speed, reversed direction
+
+**Saving**
+
+- Screenshots folder, file name template, save format, Retina downscaling
+- Library on or off, how many screenshots it remembers
+- Text recognition language, joining recognized lines into one
 
 **Editor**
 

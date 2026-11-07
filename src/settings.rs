@@ -260,6 +260,8 @@ pub const LIBRARY: &str = "library";
 pub const HIDE_ICON: &str = "hideMenuBarIcon";
 pub const CHECK_UPDATES: &str = "checkForUpdates";
 pub const LAST_UPDATE_CHECK: &str = "lastUpdateCheck";
+/// Номер вкладки, открытой в настройках последней.
+pub const SETTINGS_TAB: &str = "settingsTab";
 
 /// Какую ссылку копировать после загрузки.
 #[derive(Clone, Copy, PartialEq, Debug)]

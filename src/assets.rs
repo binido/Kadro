@@ -68,6 +68,8 @@ pub const SCAN_TEXT: &[u8] = include_bytes!("../assets/icons/scan-text.svg");
 pub const SCROLL: &[u8] = include_bytes!("../assets/icons/arrow-down-to-line.svg");
 pub const CLOUD_UPLOAD: &[u8] = include_bytes!("../assets/icons/cloud-upload.svg");
 pub const LIBRARY: &[u8] = include_bytes!("../assets/icons/images.svg");
+pub const CAMERA: &[u8] = include_bytes!("../assets/icons/camera.svg");
+pub const FOLDER_DOWN: &[u8] = include_bytes!("../assets/icons/folder-down.svg");
 
 thread_local! {
     static FONT: OnceCell<Option<Retained<NSFontDescriptor>>> = const { OnceCell::new() };
