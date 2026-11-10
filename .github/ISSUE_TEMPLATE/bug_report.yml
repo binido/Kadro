@@ -1,0 +1,39 @@
+name: Bug report
+description: Report something that does not work as expected.
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Kadro version
+      description: Find it in Settings → About. For a local build, include the commit.
+      placeholder: 0.14.0
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Mac and macOS version
+      description: Include your chip and, for display issues, monitors and scaling.
+      placeholder: MacBook Air M2, macOS version, one built-in Retina display
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the menu action or shortcut and how often it happens.
+      placeholder: "1. Open Kadro…"
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Expected and actual behaviour
+      description: What should happen, and what happens instead?
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshots or additional details
+      description: Optional. Remove personal content, access keys and private share links.

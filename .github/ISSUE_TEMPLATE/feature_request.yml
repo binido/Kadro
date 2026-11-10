@@ -1,0 +1,22 @@
+name: Feature request
+description: Suggest an improvement to Kadro.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the screenshot task you are trying to complete.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Suggested behaviour
+      description: What should Kadro do? A concrete example helps.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives or workarounds
+      description: Optional. Describe what you do today or another solution you considered.
