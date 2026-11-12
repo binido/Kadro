@@ -134,7 +134,7 @@ impl Choice for Cursor {
 /// Что лежит за окном на снимке окна.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum WindowBackground {
-    /// Только окно, без тени.
+    /// Только окно, без тени, со скруглёнными углами, достроенными до прямоугольника.
     Clean,
     /// Окно с тенью на прозрачном фоне.
     Shadow,

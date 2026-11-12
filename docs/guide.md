@@ -11,7 +11,7 @@ Capture:
 - A selected region. While selecting, Kadro shows the size in pixels and a magnifier loupe at the pointer. Arrow keys move the dragged corner by one point (Shift: ten), and holding Shift keeps the selection square.
 - The last selected region again, without selecting.
 - The entire screen under the pointer, right away or after a 3-second countdown in the menu bar.
-- A window picked with the pointer, or the active window straight away. Behind a captured window: nothing (no shadow), transparency with its shadow, the wallpaper of its screen, or a chosen colour.
+- A window picked with the pointer, or the active window straight away. Behind a captured window: nothing (no shadow, rounded corners squared off in the window's own colour), transparency with its shadow, the wallpaper of its screen, or a chosen colour.
 - Content taller than the screen with Scrolling Capture: select an area, then let Kadro scroll it down or up, or scroll it yourself. Frames are stitched into one image, fixed headers and footers appear once. It stops at the end, at the height limit, or on Return; Esc cancels. Automatic scrolling needs Accessibility access, scrolling yourself does not.
 - Multiple displays and Retina displays, each at its own scale.
 

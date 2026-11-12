@@ -373,6 +373,52 @@ fn bitmap(width: usize, height: usize) -> Option<CFRetained<CGContext>> {
     }
 }
 
+/// Наибольший радиус скругления окна в точках. Прозрачный край шире - форма самого окна, а не угол.
+const MAX_CORNER: f64 = 40.0;
+
+/// Достраивает скруглённые углы снятого окна до прямоугольника цветом его же края.
+/// Возвращает None, если холст не создался.
+pub fn square_corners(image: &CGImage, scale: f64) -> Option<CFRetained<CGImage>> {
+    let (width, height) = (CGImage::width(Some(image)), CGImage::height(Some(image)));
+    let mut pixels = vec![0u32; width * height];
+    let space = CGImage::color_space(Some(image));
+    // SAFETY: буфер вмещает width * height пикселей по 4 байта и живёт дольше контекста.
+    let context = unsafe {
+        CGBitmapContextCreate(
+            pixels.as_mut_ptr().cast(),
+            width,
+            height,
+            8,
+            width * 4,
+            space.as_deref(),
+            CGImageAlphaInfo::PremultipliedFirst.0 | CGImageByteOrderInfo::Order32Little.0,
+        )
+    }?;
+    let bounds = CGRect::new(CGPoint::ZERO, CGSize::new(width as f64, height as f64));
+    CGContext::draw_image(Some(&context), bounds, Some(image));
+    fill_corners(&mut pixels, width, (MAX_CORNER * scale) as usize);
+    CGBitmapContextCreateImage(Some(&context))
+}
+
+/// Закрашивает прозрачные края каждой строки цветом ближайшего непрозрачного пикселя.
+/// Пиксели в порядке ARGB, край длиннее `max_run` остаётся прозрачным.
+fn fill_corners(pixels: &mut [u32], width: usize, max_run: usize) {
+    let opaque = |pixel: &u32| pixel >> 24 == 0xFF;
+    for row in pixels.chunks_exact_mut(width) {
+        let (Some(first), Some(last)) = (row.iter().position(opaque), row.iter().rposition(opaque)) else {
+            continue;
+        };
+        if first <= max_run {
+            let color = row[first];
+            row[..first].fill(color);
+        }
+        if width - 1 - last <= max_run {
+            let color = row[last];
+            row[last + 1..].fill(color);
+        }
+    }
+}
+
 /// Обои экрана, где сняли окно, и место этого экрана в глобальных точках CG.
 pub struct Wallpaper {
     pub path: PathBuf,
@@ -497,6 +543,23 @@ mod tests {
         }
         .unwrap();
         CGBitmapContextCreateImage(Some(&context)).unwrap()
+    }
+
+    #[test]
+    fn transparent_corners_take_the_edge_colour_and_wide_gaps_stay() {
+        let (clear, a, b) = (0u32, 0xFF11_2233, 0xFF44_5566);
+        #[rustfmt::skip]
+        let mut pixels = [
+            clear, clear, a,     b,     clear,
+            clear, clear, clear, clear, clear,
+            clear, clear, clear, clear, a,
+        ];
+        fill_corners(&mut pixels, 5, 2);
+        assert_eq!(pixels[..5], [a, a, a, b, b]);
+        // целиком прозрачная строка
+        assert_eq!(pixels[5..10], [clear; 5]);
+        // край шире max_run
+        assert_eq!(pixels[10..], [clear, clear, clear, clear, a]);
     }
 
     #[test]

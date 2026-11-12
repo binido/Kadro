@@ -109,6 +109,11 @@ pub fn deliver(image: &CGImage, scale: f64, shot: &Shot) {
             });
         });
     }
+    if shot.kind == Kind::Window && background == WindowBackground::Clean {
+        // С прозрачными углами снимок на светлом фоне получает белые клинья вокруг скруглений.
+        let squared = backdrop::square_corners(image, scale);
+        return finish(squared.as_deref().unwrap_or(image), scale, shot);
+    }
     finish(image, scale, shot);
 }
 
