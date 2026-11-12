@@ -22,8 +22,8 @@ use objc2_app_kit::{
     NSPopUpButton, NSPopover, NSPopoverBehavior, NSPrintOperation, NSRectFill, NSRectFillUsingOperation, NSResponder,
     NSSavePanel, NSScreen, NSScrollView, NSSlider, NSStackView, NSStackViewGravity, NSTextField, NSTextFieldDelegate,
     NSToolbar, NSToolbarDelegate, NSToolbarDisplayMode, NSToolbarFlexibleSpaceItemIdentifier, NSToolbarItem,
-    NSTrackingArea, NSTrackingAreaOptions, NSUserInterfaceLayoutOrientation, NSView, NSViewController, NSWindow,
-    NSWindowDelegate, NSWindowStyleMask, NSWindowToolbarStyle,
+    NSToolbarSpaceItemIdentifier, NSTrackingArea, NSTrackingAreaOptions, NSUserInterfaceLayoutOrientation, NSView,
+    NSViewController, NSWindow, NSWindowDelegate, NSWindowStyleMask, NSWindowToolbarStyle,
 };
 use objc2_core_foundation::CFRetained;
 use objc2_core_graphics::CGImage;
@@ -48,6 +48,7 @@ const MAX_ZOOM: f64 = 32.0;
 const MAX_SCREEN_SHARE: f64 = 0.85;
 const MIN_WINDOW: NSSize = NSSize::new(640.0, 540.0);
 const PALETTE_WIDTH: f64 = 44.0;
+const PALETTE_BUTTON: f64 = 28.0;
 /// На сколько экранных точек можно промахнуться мимо аннотации.
 const HIT_TOLERANCE: f64 = 6.0;
 
@@ -94,8 +95,8 @@ fn buttons() -> [Button; 18] {
     ]
 }
 
-/// Порядок кнопок: группы разделены гибким пробелом.
-const TOOLBAR_LAYOUT: [&str; 26] = [
+/// Порядок кнопок, пустая строка разделяет группы.
+const TOOLBAR_LAYOUT: [&str; 25] = [
     "undo",
     "redo",
     "",
@@ -121,7 +122,6 @@ const TOOLBAR_LAYOUT: [&str; 26] = [
     "upload",
     "exportGif",
     "print",
-    "",
 ];
 
 /// Что делает мышь на холсте.
@@ -438,13 +438,18 @@ define_class!(
 );
 
 fn toolbar_identifiers() -> Retained<NSArray<NSString>> {
-    let ids: Vec<_> = TOOLBAR_LAYOUT
-        .iter()
-        .map(|id| {
-            // SAFETY: системная константа - неизменяемая строка, живущая весь процесс.
-            if id.is_empty() { unsafe { NSToolbarFlexibleSpaceItemIdentifier }.copy() } else { NSString::from_str(id) }
-        })
-        .collect();
+    // SAFETY: системные константы - неизменяемые строки, живущие весь процесс.
+    let (space, flexible) = unsafe { (NSToolbarSpaceItemIdentifier, NSToolbarFlexibleSpaceItemIdentifier) };
+    let mut ids = Vec::new();
+    for id in TOOLBAR_LAYOUT {
+        if id.is_empty() {
+            // Гибкий пробел в узком окне сжимается до нуля, поэтому рядом стоит постоянный. Иначе группы слипаются.
+            ids.extend([space.copy(), flexible.copy()]);
+        } else {
+            ids.push(NSString::from_str(id));
+        }
+    }
+    ids.push(flexible.copy());
     NSArray::from_retained_slice(&ids)
 }
 
@@ -475,7 +480,10 @@ impl Editor {
         if let Some((label, control)) = control {
             item.setLabel(&NSString::from_str(label));
             item.setToolTip(Some(&NSString::from_str(label)));
-            item.setView(Some(&control));
+            // Панель ставит элементы вплотную по видимой рамке, поля есть только у обёртки.
+            let padded = NSStackView::stackViewWithViews(&NSArray::from_retained_slice(&[control]), self.mtm());
+            padded.setEdgeInsets(NSEdgeInsets { top: 0.0, left: 4.0, bottom: 0.0, right: 4.0 });
+            item.setView(Some(&padded));
             return Some(item);
         }
         let button = buttons().into_iter().find(|b| identifier.to_string() == b.id)?;
@@ -1714,11 +1722,14 @@ fn palette(mtm: MainThreadMarker, editor: &Editor, height: f64) -> (Retained<NSS
         .iter()
         .enumerate()
         .filter_map(|(index, (pointer, tip, icon, _))| {
-            let image = assets::icon(icon, 18.0)?;
+            let image = assets::icon(icon, 16.0)?;
             let button =
                 unsafe { NSButton::buttonWithImage_target_action(&image, Some(editor), Some(sel!(chooseTool:)), mtm) };
             button.setButtonType(NSButtonType::PushOnPushOff);
-            button.setBezelStyle(NSBezelStyle::Toolbar);
+            // У Toolbar высота рамки постоянная и меньше иконки. FlexiblePush тянет рамку по размеру кнопки.
+            button.setBezelStyle(NSBezelStyle::FlexiblePush);
+            button.widthAnchor().constraintEqualToConstant(PALETTE_BUTTON).setActive(true);
+            button.heightAnchor().constraintEqualToConstant(PALETTE_BUTTON).setActive(true);
             button.setTag(index as isize);
             button.setToolTip(Some(&NSString::from_str(tip)));
             button.setState(if *pointer == Pointer::Select { NSControlStateValueOn } else { NSControlStateValueOff });
@@ -1827,6 +1838,8 @@ pub fn open(mtm: MainThreadMarker, image: CFRetained<CGImage>, scale: f64, shot:
     let color_well =
         NSColorWell::initWithFrame(NSColorWell::alloc(mtm), NSRect::new(NSPoint::ZERO, NSSize::new(38.0, 24.0)));
     color_well.setColorWellStyle(NSColorWellStyle::Minimal);
+    color_well.widthAnchor().constraintEqualToConstant(38.0).setActive(true);
+    color_well.heightAnchor().constraintEqualToConstant(24.0).setActive(true);
     unsafe {
         color_well.setTarget(Some(&*editor));
         color_well.setAction(Some(sel!(colorChanged:)));
