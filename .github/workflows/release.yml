@@ -9,8 +9,9 @@ permissions:
 
 jobs:
   release:
-    # macos-15 работает на Apple Silicon, поэтому сборка получается только под arm64.
-    runs-on: macos-15
+    # macos-26 работает на Apple Silicon, поэтому сборка получается только под arm64.
+    # От SDK образа зависит оформление. Со старым SDK macOS 26+ рисует окна в прежнем стиле.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
