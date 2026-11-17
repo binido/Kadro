@@ -13,7 +13,7 @@ use objc2_core_foundation::{CFArray, CFRetained};
 use objc2_foundation::{NSArray, NSDictionary, NSString, NSUserDefaults, ns_string};
 
 use crate::bridge::{self, number};
-use crate::{browser, capture, editor, output, overlay, pin, upload};
+use crate::{browser, capture, editor, output, overlay, pin, settings, upload};
 
 type OSStatus = i32;
 
@@ -258,7 +258,7 @@ impl Action {
     }
 
     /// Номер действия для Carbon, по нему обработчик находит действие в ALL.
-    fn index(self) -> u32 {
+    pub fn index(self) -> u32 {
         Action::ALL.iter().position(|a| *a == self).unwrap_or(0) as u32
     }
 
@@ -311,6 +311,21 @@ impl Action {
         }
     }
 
+    /// Показано ли действие в меню и работает ли его сочетание. Загрузка последнего снимка
+    /// выключается и вместе с самой загрузкой.
+    pub fn is_enabled(self) -> bool {
+        (self != Action::UploadLast || settings::upload_enabled())
+            && settings::flag(&self.enabled_key()).unwrap_or(true)
+    }
+
+    pub fn set_enabled(self, enabled: bool) {
+        settings::set_flag(&self.enabled_key(), enabled);
+    }
+
+    fn enabled_key(self) -> String {
+        format!("{}Enabled", self.defaults_key())
+    }
+
     pub fn set_shortcut(self, shortcut: Option<Shortcut>) {
         let value = NSString::from_str(&shortcut.map(Shortcut::encode).unwrap_or_default());
         let key = NSString::from_str(self.defaults_key());
@@ -337,7 +352,7 @@ pub fn install() {
 
 pub fn register_all() {
     unregister_all();
-    for action in Action::ALL {
+    for action in Action::ALL.into_iter().filter(|action| action.is_enabled()) {
         if let Some(shortcut) = action.shortcut() {
             match register(action, shortcut) {
                 Some(hot_key) => REGISTERED.with_borrow_mut(|r| r.push(hot_key)),

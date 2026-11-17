@@ -41,7 +41,8 @@ const FONT_SIZE: f64 = 13.0;
 
 thread_local! {
     static WINDOW: RefCell<Option<Retained<NSWindow>>> = const { RefCell::new(None) };
-    static CONTROLLER: OnceCell<Retained<Controller>> = const { OnceCell::new() };
+    // Контроллер у каждого окна свой, т.к. в нём лежат ссылки на контролы этого окна.
+    static CONTROLLER: RefCell<Option<Retained<Controller>>> = const { RefCell::new(None) };
 }
 
 #[derive(Default)]
@@ -53,6 +54,7 @@ struct ControllerIvars {
     directory: OnceCell<Retained<NSButton>>,
     /// Итог проверки подключения к хранилищу.
     test_status: OnceCell<Retained<NSTextField>>,
+    shortcuts: RefCell<Vec<Retained<ShortcutButton>>>,
 }
 
 define_class!(
@@ -179,8 +181,8 @@ define_class!(
                         Ok(()) => "Connection works: Kadro can upload to this bucket.".to_string(),
                         Err(message) => message,
                     };
-                    CONTROLLER.with(|c| {
-                        if let Some(status) = c.get().and_then(|c| c.ivars().test_status.get()) {
+                    CONTROLLER.with_borrow(|c| {
+                        if let Some(status) = c.as_ref().and_then(|c| c.ivars().test_status.get()) {
                             status.setStringValue(&NSString::from_str(&text));
                         }
                     });
@@ -192,6 +194,32 @@ define_class!(
         fn toggle_hide_icon(&self, sender: &NSButton) {
             settings::set_flag(settings::HIDE_ICON, is_on(sender));
             crate::set_icon_visible(!is_on(sender));
+        }
+
+        #[unsafe(method(toggleUpload:))]
+        fn toggle_upload(&self, sender: &NSButton) {
+            settings::set_flag(settings::UPLOAD_ENABLED, is_on(sender));
+            hotkeys::register_all();
+            rebuild_later();
+        }
+
+        #[unsafe(method(toggleLinks:))]
+        fn toggle_links(&self, sender: &NSButton) {
+            settings::set_flag(settings::LINKS_ENABLED, is_on(sender));
+            rebuild_later();
+        }
+
+        // Номер действия в Action::ALL лежит в tag флажка.
+        #[unsafe(method(toggleAction:))]
+        fn toggle_action(&self, sender: &NSButton) {
+            let Some(action) = usize::try_from(sender.tag()).ok().and_then(|i| Action::ALL.get(i).copied()) else {
+                return;
+            };
+            action.set_enabled(is_on(sender));
+            hotkeys::register_all();
+            for button in self.ivars().shortcuts.borrow().iter().filter(|b| b.action() == action) {
+                button.setEnabled(action.is_enabled());
+            }
         }
 
         #[unsafe(method(changeLinkPolicy:))]
@@ -476,6 +504,21 @@ pub fn show(mtm: MainThreadMarker) {
     window.makeKeyAndOrderFront(None);
 }
 
+/// Пересобирает окно на том же месте после того, как флажок открыл или спрятал часть настроек.
+/// Откладывается до следующего цикла, иначе окно закрылось бы посреди обработки нажатия на свой флажок.
+fn rebuild_later() {
+    dispatch2::DispatchQueue::main().exec_async(|| {
+        let Some(mtm) = MainThreadMarker::new() else { return };
+        let Some(old) = WINDOW.take() else { return };
+        let frame = old.frame();
+        old.close();
+        let window = build_window(mtm);
+        window.setFrameTopLeftPoint(NSPoint::new(frame.origin.x, frame.origin.y + frame.size.height));
+        window.makeKeyAndOrderFront(None);
+        WINDOW.set(Some(window));
+    });
+}
+
 define_class!(
     /// Вкладки настроек, которые запоминают последнюю открытую.
     #[unsafe(super(NSTabViewController, NSViewController, NSResponder, NSObject))]
@@ -503,26 +546,31 @@ define_class!(
             unsafe {
                 let _: () = msg_send![super(self), tabView: tab_view, didSelectTabViewItem: item];
             }
-            settings::set_string(settings::SETTINGS_TAB, &self.selectedTabViewItemIndex().to_string());
+            if let Some(item) = item {
+                settings::set_string(settings::SETTINGS_TAB, &item.label().to_string());
+            }
         }
     }
 );
 
 fn build_window(mtm: MainThreadMarker) -> Retained<NSWindow> {
-    let controller = CONTROLLER.with(|c| c.get_or_init(|| Controller::new(mtm)).clone());
-    // Читается до вкладок, потому что первая добавленная вкладка выбирается и записывает свой номер.
-    let last = settings::string(settings::SETTINGS_TAB).and_then(|t| t.parse::<isize>().ok()).unwrap_or(0);
+    let controller = Controller::new(mtm);
+    CONTROLLER.set(Some(controller.clone()));
+    // Читается до вкладок, потому что первая добавленная вкладка выбирается и записывает своё название.
+    let last = settings::string(settings::SETTINGS_TAB).unwrap_or_default();
     let tabs: Retained<Tabs> = unsafe { msg_send![Tabs::alloc(mtm), init] };
     tabs.setTabStyle(NSTabViewControllerTabStyle::Toolbar);
-    let pages = [
+    let mut pages = vec![
         ("General", assets::SLIDERS, general_tab(mtm, &controller)),
         ("Capture", assets::CAMERA, capture_tab(mtm, &controller)),
         ("Saving", assets::FOLDER_DOWN, saving_tab(mtm, &controller)),
         ("Editor", assets::SQUARE_PEN, editor_tab(mtm, &controller)),
-        ("Upload", assets::CLOUD_UPLOAD, upload_tab(mtm, &controller)),
-        ("Shortcuts", assets::KEYBOARD, shortcuts_tab(mtm, &controller)),
-        ("About", assets::INFO, about_tab(mtm, &controller)),
     ];
+    if settings::upload_enabled() {
+        pages.push(("Upload", assets::CLOUD_UPLOAD, upload_tab(mtm, &controller)));
+    }
+    pages.push(("Shortcuts", assets::KEYBOARD, shortcuts_tab(mtm, &controller)));
+    pages.push(("About", assets::INFO, about_tab(mtm, &controller)));
     // Все вкладки одной ширины, по самой широкой, высота у каждой своя.
     let width = pages.iter().map(|(_, _, view)| view.frame().size.width).fold(0.0, f64::max);
     for (title, icon, view) in pages {
@@ -535,8 +583,8 @@ fn build_window(mtm: MainThreadMarker) -> Retained<NSWindow> {
         item.setImage(assets::icon(icon, 20.0).as_deref());
         tabs.addTabViewItem(&item);
     }
-    if (0..tabs.tabViewItems().len() as isize).contains(&last) {
-        tabs.setSelectedTabViewItemIndex(last);
+    if let Some(index) = tabs.tabViewItems().iter().position(|item| item.label().to_string() == last) {
+        tabs.setSelectedTabViewItemIndex(index as isize);
     }
 
     let window = NSWindow::windowWithContentViewController(&tabs);
@@ -571,6 +619,8 @@ enum Row {
     /// Заголовок группы строк.
     Heading(&'static str),
     Note(Retained<NSView>),
+    /// Строка с флажком на месте подписи.
+    Check(Retained<NSView>, Retained<NSView>),
 }
 
 /// Запуск, строка меню, ссылки и обновления.
@@ -580,7 +630,6 @@ fn general_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSVie
     let hide_icon = checkbox(mtm, "Hide the menu bar icon", current.hide_icon, controller, sel!(toggleHideIcon:));
     let hide_hint = label(mtm, "Open Kadro again from Applications to get back to Settings.");
     hide_hint.setTextColor(Some(&NSColor::secondaryLabelColor()));
-    let links = radios(mtm, current.links, controller, sel!(changeLinkPolicy:));
     let updates_on =
         checkbox(mtm, "Check for updates once a day", current.check_updates, controller, sel!(toggleCheckUpdates:));
     let check_now = unsafe {
@@ -591,16 +640,22 @@ fn general_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSVie
             mtm,
         )
     };
-    grid(
-        mtm,
-        &[
-            Row::Field("Autostart", view(&login)),
-            Row::Field("Menu bar", view(&hide_icon)),
-            Row::Field("", view(&hide_hint)),
-            Row::Field("kadro:// links", inline(mtm, &links)),
-            Row::Field("Updates", inline(mtm, &[view(&updates_on), view(&check_now)])),
-        ],
-    )
+    let upload_on = checkbox(mtm, "Upload to S3-compatible storage", current.upload, controller, sel!(toggleUpload:));
+    let links_on =
+        checkbox(mtm, "Follow kadro:// links from other apps", current.links_enabled, controller, sel!(toggleLinks:));
+    let mut rows = vec![
+        Row::Field("Autostart", view(&login)),
+        Row::Field("Menu bar", view(&hide_icon)),
+        Row::Field("", view(&hide_hint)),
+        Row::Field("Updates", inline(mtm, &[view(&updates_on), view(&check_now)])),
+        Row::Heading("Advanced"),
+        Row::Field("Upload", view(&upload_on)),
+        Row::Field("Links", view(&links_on)),
+    ];
+    if current.links_enabled {
+        rows.push(Row::Field("", inline(mtm, &radios(mtm, current.links, controller, sel!(changeLinkPolicy:)))));
+    }
+    grid(mtm, &rows)
 }
 
 /// Что происходит после снимка, что попадает в кадр и снимок с прокруткой.
@@ -818,7 +873,10 @@ fn upload_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView
 }
 
 fn shortcuts_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView> {
-    let how = label(mtm, "To use ⇧⌘3 and ⇧⌘4, turn them off in Keyboard Shortcuts → Screenshots.");
+    let how = label(
+        mtm,
+        "Unchecked actions leave the menu and their shortcuts stop working.\nTo use ⇧⌘3 and ⇧⌘4, turn them off in Keyboard Shortcuts → Screenshots.",
+    );
     let open_settings = unsafe {
         NSButton::buttonWithTitle_target_action(
             ns_string!("Open Keyboard Settings"),
@@ -830,13 +888,20 @@ fn shortcuts_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSV
     open_settings.setFont(Some(&assets::font(FONT_SIZE)));
 
     let message = label(mtm, "");
+    let upload = settings::upload_enabled();
+    // Флажок слева прячет действие из меню и выключает его сочетание.
     let shortcut = |action: &Action| {
         let button = ShortcutButton::new(mtm, *action, &message);
         button.widthAnchor().constraintEqualToConstant(SHORTCUT_WIDTH).setActive(true);
-        Row::Field(action.title(), view(&button))
+        button.setEnabled(action.is_enabled());
+        controller.ivars().shortcuts.borrow_mut().push(button.clone());
+        let check = checkbox(mtm, action.title(), action.is_enabled(), controller, sel!(toggleAction:));
+        check.setTag(action.index() as isize);
+        Row::Check(view(&check), view(&button))
     };
     let group = |title, actions: &[Action]| {
-        let rows: Vec<_> = std::iter::once(Row::Heading(title)).chain(actions.iter().map(&shortcut)).collect();
+        let shown = actions.iter().filter(|a| upload || **a != Action::UploadLast);
+        let rows: Vec<_> = std::iter::once(Row::Heading(title)).chain(shown.map(&shortcut)).collect();
         table(mtm, &rows)
     };
     // Первые семь действий снимают экран, остальные работают с готовыми снимками.
@@ -974,6 +1039,10 @@ fn table(mtm: MainThreadMarker, rows: &[Row]) -> Retained<NSGridView> {
                     [view(&heading), empty]
                 }
                 Row::Note(note) => [note.clone(), empty],
+                Row::Check(check, control) => {
+                    label_width = label_width.max(check.fittingSize().width);
+                    [check.clone(), control.clone()]
+                }
             };
             NSArray::from_retained_slice(&pair)
         })
@@ -991,6 +1060,10 @@ fn table(mtm: MainThreadMarker, rows: &[Row]) -> Retained<NSGridView> {
     for (index, row) in rows.iter().enumerate() {
         match row {
             Row::Field(..) => continue,
+            Row::Check(..) => {
+                grid.cellAtColumnIndex_rowIndex(0, index as isize).setXPlacement(NSGridCellPlacement::Leading);
+                continue;
+            }
             Row::Wide(..) => {
                 grid.cellAtColumnIndex_rowIndex(1, index as isize).setXPlacement(NSGridCellPlacement::Fill);
                 continue;

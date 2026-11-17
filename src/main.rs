@@ -117,11 +117,13 @@ define_class!(
     }
 
     unsafe impl NSMenuDelegate for AppDelegate {
-        // Сочетания могли поменяться в настройках, поэтому подписи обновляются при каждом открытии.
+        // Сочетания и выключенные действия могли поменяться в настройках, поэтому пункты
+        // обновляются при каждом открытии.
         #[unsafe(method(menuNeedsUpdate:))]
         fn menu_needs_update(&self, menu: &NSMenu) {
             for item in menu.itemArray() {
                 let Some(action) = action_for_tag(item.tag()) else { continue };
+                item.setHidden(!action.is_enabled());
                 match action.shortcut() {
                     Some(shortcut) => {
                         let key = shortcut.key_name().filter(|k| k.chars().count() == 1).unwrap_or("");
@@ -134,6 +136,7 @@ define_class!(
                     }
                 }
             }
+            hide_extra_separators(menu);
         }
     }
 
@@ -265,6 +268,25 @@ fn action_icon(action: Action) -> &'static [u8] {
         Action::UploadLast => assets::CLOUD_UPLOAD,
         Action::OpenLibrary => assets::LIBRARY,
         Action::ShowMenu => assets::KADRO,
+    }
+}
+
+/// Оставляет видимыми только разделители, у которых есть видимые пункты и выше, и ниже.
+fn hide_extra_separators(menu: &NSMenu) {
+    let mut pending: Option<Retained<NSMenuItem>> = None;
+    let mut seen_item = false;
+    for item in menu.itemArray() {
+        if item.isSeparatorItem() {
+            item.setHidden(true);
+            if seen_item {
+                pending = Some(item);
+            }
+        } else if !item.isHidden() {
+            if let Some(separator) = pending.take() {
+                separator.setHidden(false);
+            }
+            seen_item = true;
+        }
     }
 }
 

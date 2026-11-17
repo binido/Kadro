@@ -259,8 +259,10 @@ pub const UPLOAD_PUBLIC_URL: &str = "uploadPublicUrl";
 pub const LIBRARY: &str = "library";
 pub const HIDE_ICON: &str = "hideMenuBarIcon";
 pub const CHECK_UPDATES: &str = "checkForUpdates";
+pub const UPLOAD_ENABLED: &str = "uploadEnabled";
+pub const LINKS_ENABLED: &str = "urlSchemeEnabled";
 pub const LAST_UPDATE_CHECK: &str = "lastUpdateCheck";
-/// Номер вкладки, открытой в настройках последней.
+/// Название вкладки, открытой в настройках последней.
 pub const SETTINGS_TAB: &str = "settingsTab";
 
 /// Какую ссылку копировать после загрузки.
@@ -378,22 +380,21 @@ impl Choice for LibraryLimit {
     }
 }
 
-/// Что делать со ссылками `kadro://`.
+/// Что делать со ссылками `kadro://`, когда они включены.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum LinkPolicy {
-    Off,
     /// Спрашивать перед каждой ссылкой.
     Ask,
     Allow,
 }
 
 impl Choice for LinkPolicy {
+    // Сохранённое старыми версиями "off" не распознаётся, выключение хранит LINKS_ENABLED.
     const DEFAULTS_KEY: &'static str = "urlScheme";
-    const ALL: &'static [Self] = &[LinkPolicy::Off, LinkPolicy::Ask, LinkPolicy::Allow];
+    const ALL: &'static [Self] = &[LinkPolicy::Ask, LinkPolicy::Allow];
 
     fn title(self) -> &'static str {
         match self {
-            LinkPolicy::Off => "Off",
             LinkPolicy::Ask => "Ask first",
             LinkPolicy::Allow => "Allow",
         }
@@ -401,7 +402,6 @@ impl Choice for LinkPolicy {
 
     fn key(self) -> &'static str {
         match self {
-            LinkPolicy::Off => "off",
             LinkPolicy::Ask => "ask",
             LinkPolicy::Allow => "allow",
         }
@@ -590,7 +590,11 @@ pub struct Settings {
     /// Вести библиотеку сохранённых снимков.
     pub library: bool,
     pub library_limit: LibraryLimit,
+    /// Выполнять ссылки `kadro://` из других приложений.
+    pub links_enabled: bool,
     pub links: LinkPolicy,
+    /// Загрузка в хранилище. Без неё прячутся вкладка Upload и все кнопки загрузки.
+    pub upload: bool,
     /// Не показывать иконку в строке меню.
     pub hide_icon: bool,
     /// Раз в день проверять, вышла ли новая версия.
@@ -643,15 +647,23 @@ impl Settings {
             scroll_reverse: flag(SCROLL_REVERSE).unwrap_or(false),
             library: flag(LIBRARY).unwrap_or(true),
             library_limit: choice().unwrap_or(LibraryLimit::FiveThousand),
-            links: choice().unwrap_or(LinkPolicy::Off),
+            // Ссылки, включённые до появления флага, остаются включёнными.
+            links_enabled: flag(LINKS_ENABLED).unwrap_or_else(|| choice::<LinkPolicy>().is_some()),
+            links: choice().unwrap_or(LinkPolicy::Ask),
+            upload: upload_enabled(),
             hide_icon: flag(HIDE_ICON).unwrap_or(false),
             check_updates: flag(CHECK_UPDATES).unwrap_or(true),
         }
     }
 }
 
+/// Включена ли загрузка. Хранилище, настроенное до появления флага, её включает.
+pub fn upload_enabled() -> bool {
+    flag(UPLOAD_ENABLED).unwrap_or_else(|| string(UPLOAD_BUCKET).is_some_and(|bucket| !bucket.trim().is_empty()))
+}
+
 /// Сохранённый флаг. `None`, если пользователь его ещё не менял.
-fn flag(key: &str) -> Option<bool> {
+pub fn flag(key: &str) -> Option<bool> {
     let defaults = NSUserDefaults::standardUserDefaults();
     let key = NSString::from_str(key);
     defaults.objectForKey(&key).map(|_| defaults.boolForKey(&key))

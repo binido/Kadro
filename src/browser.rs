@@ -490,7 +490,10 @@ fn context_menu(mtm: MainThreadMarker, browser: &Browser) -> Retained<NSMenu> {
         ("Show in Finder", sel!(revealSelected:)),
         ("Upload", sel!(uploadSelected:)),
         ("Move to Trash", sel!(trashSelected:)),
-    ] {
+    ]
+    .into_iter()
+    .filter(|(title, _)| *title != "Upload" || settings::upload_enabled())
+    {
         let item = unsafe {
             NSMenuItem::initWithTitle_action_keyEquivalent(
                 NSMenuItem::alloc(mtm),

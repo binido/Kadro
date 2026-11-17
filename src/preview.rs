@@ -27,7 +27,7 @@ use objc2_user_notifications::{
 use crate::capture::Shot;
 use crate::output::{self, in_background};
 use crate::settings::{Confirmation, PreviewHiding, Settings};
-use crate::{assets, editor, geometry, pin, recognize, upload};
+use crate::{assets, editor, geometry, pin, recognize, settings, upload};
 
 /// Наибольший размер миниатюры в точках.
 const MAX_SIZE: NSSize = NSSize::new(220.0, 160.0);
@@ -228,20 +228,31 @@ impl ThumbnailView {
         this.addTrackingArea(&area);
 
         let inset = 6.0;
-        // Нижний ряд по центру: Edit, Copy, Save, Upload, Text, Pin с зазором в 8 точек.
-        let step = BUTTON_SIZE + 8.0;
-        let row_left = size.width / 2.0 - (6.0 * BUTTON_SIZE + 40.0) / 2.0;
-        let buttons = [
-            (assets::X, sel!(closePreview:), NSPoint::new(inset, size.height - BUTTON_SIZE - inset)),
-            (assets::SQUARE_PEN, sel!(editImage:), NSPoint::new(row_left, inset)),
-            (assets::COPY, sel!(copyImage:), NSPoint::new(row_left + step, inset)),
-            (assets::SAVE, sel!(saveImage:), NSPoint::new(row_left + 2.0 * step, inset)),
-            (assets::CLOUD_UPLOAD, sel!(uploadImage:), NSPoint::new(row_left + 3.0 * step, inset)),
-            (assets::SCAN_TEXT, sel!(recognizeText:), NSPoint::new(row_left + 4.0 * step, inset)),
-            (assets::PIN, sel!(pinImage:), NSPoint::new(row_left + 5.0 * step, inset)),
-        ]
-        .map(|(icon, action, origin)| this.add_button(mtm, icon, action, origin));
-        *this.ivars().buttons.borrow_mut() = buttons.to_vec();
+        let mut row = vec![
+            (assets::SQUARE_PEN, sel!(editImage:)),
+            (assets::COPY, sel!(copyImage:)),
+            (assets::SAVE, sel!(saveImage:)),
+            (assets::CLOUD_UPLOAD, sel!(uploadImage:)),
+            (assets::SCAN_TEXT, sel!(recognizeText:)),
+            (assets::PIN, sel!(pinImage:)),
+        ];
+        if !settings::upload_enabled() {
+            row.retain(|(icon, _)| *icon != assets::CLOUD_UPLOAD);
+        }
+        // Нижний ряд по центру с зазором в 8 точек.
+        let gap = 8.0;
+        let step = BUTTON_SIZE + gap;
+        let row_left = size.width / 2.0 - (row.len() as f64 * step - gap) / 2.0;
+        let close = (assets::X, sel!(closePreview:), NSPoint::new(inset, size.height - BUTTON_SIZE - inset));
+        let buttons: Vec<_> = std::iter::once(close)
+            .chain(
+                row.into_iter()
+                    .enumerate()
+                    .map(|(i, (icon, action))| (icon, action, NSPoint::new(row_left + i as f64 * step, inset))),
+            )
+            .map(|(icon, action, origin)| this.add_button(mtm, icon, action, origin))
+            .collect();
+        *this.ivars().buttons.borrow_mut() = buttons;
         this.set_buttons_hidden(true);
         this
     }

@@ -138,33 +138,31 @@ pub fn handle(mtm: MainThreadMarker, url: &str) {
         Ok(command) => command,
         Err(message) => return explain(mtm, "Kadro couldn't follow the link", &message),
     };
-    match Settings::load().links {
-        LinkPolicy::Off => {
-            let alert = NSAlert::new(mtm);
-            alert.setMessageText(ns_string!("Kadro links are turned off"));
-            alert.setInformativeText(&NSString::from_str(&format!(
-                "An app or page asked Kadro to open {url}. Turn on links in Settings → General if you use them."
+    let settings = Settings::load();
+    if !settings.links_enabled {
+        let alert = NSAlert::new(mtm);
+        alert.setMessageText(ns_string!("Kadro links are turned off"));
+        alert.setInformativeText(&NSString::from_str(&format!(
+                "An app or page asked Kadro to open {url}. Turn on kadro:// links in Settings → General → Advanced if you use them."
             )));
-            alert.addButtonWithTitle(ns_string!("Open Settings"));
-            alert.addButtonWithTitle(ns_string!("Ignore"));
-            NSApplication::sharedApplication(mtm).activate();
-            if alert.runModal() == NSAlertFirstButtonReturn {
-                prefs::show(mtm);
-            }
+        alert.addButtonWithTitle(ns_string!("Open Settings"));
+        alert.addButtonWithTitle(ns_string!("Ignore"));
+        NSApplication::sharedApplication(mtm).activate();
+        if alert.runModal() == NSAlertFirstButtonReturn {
+            prefs::show(mtm);
+        }
+        return;
+    }
+    if settings.links == LinkPolicy::Ask {
+        let alert = NSAlert::new(mtm);
+        alert.setMessageText(ns_string!("Follow this Kadro link?"));
+        alert.setInformativeText(&NSString::from_str(url));
+        alert.addButtonWithTitle(ns_string!("Allow"));
+        alert.addButtonWithTitle(ns_string!("Cancel"));
+        NSApplication::sharedApplication(mtm).activate();
+        if alert.runModal() != NSAlertFirstButtonReturn {
             return;
         }
-        LinkPolicy::Ask => {
-            let alert = NSAlert::new(mtm);
-            alert.setMessageText(ns_string!("Follow this Kadro link?"));
-            alert.setInformativeText(&NSString::from_str(url));
-            alert.addButtonWithTitle(ns_string!("Allow"));
-            alert.addButtonWithTitle(ns_string!("Cancel"));
-            NSApplication::sharedApplication(mtm).activate();
-            if alert.runModal() != NSAlertFirstButtonReturn {
-                return;
-            }
-        }
-        LinkPolicy::Allow => {}
     }
     run(mtm, command);
 }

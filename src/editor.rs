@@ -441,7 +441,8 @@ fn toolbar_identifiers() -> Retained<NSArray<NSString>> {
     // SAFETY: системные константы - неизменяемые строки, живущие весь процесс.
     let (space, flexible) = unsafe { (NSToolbarSpaceItemIdentifier, NSToolbarFlexibleSpaceItemIdentifier) };
     let mut ids = Vec::new();
-    for id in TOOLBAR_LAYOUT {
+    let upload = crate::settings::upload_enabled();
+    for id in TOOLBAR_LAYOUT.into_iter().filter(|id| upload || *id != "upload") {
         if id.is_empty() {
             // Гибкий пробел в узком окне сжимается до нуля, поэтому рядом стоит постоянный. Иначе группы слипаются.
             ids.extend([space.copy(), flexible.copy()]);

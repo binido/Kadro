@@ -46,6 +46,7 @@ Text and codes:
 
 Upload:
 
+- Upload is off until it is turned on in Settings → General → Advanced. Until then the Upload tab and every Upload button stay hidden.
 - Upload a screenshot from the preview, the editor or the menu (More → Upload Last Screenshot) to any S3-compatible storage: Amazon S3, Cloudflare R2, Backblaze B2, MinIO and others. When the upload finishes, the link is on the clipboard.
 - The link is temporary (1 hour, 1 day or 7 days), public (the bucket's address or your own domain), or none.
 - Requests are signed with AWS Signature V4 by Kadro itself, with no SDK. The access and secret keys are kept in the Keychain. Test Connection uploads and deletes a small file to check the keys, the bucket and write access.
@@ -78,7 +79,7 @@ App:
 
 ## Links
 
-`kadro://` links let other apps, scripts and Shortcuts drive Kadro. They are off by default; in Settings → General they can be allowed or set to ask before every link.
+`kadro://` links let other apps, scripts and Shortcuts drive Kadro. They are off by default; in Settings → General → Advanced they can be turned on and allowed or set to ask before every link.
 
 | Link | What it does |
 |---|---|
@@ -111,8 +112,8 @@ A compact native preferences window uses Space Grotesk typography and Lucide ico
 
 - Launch at login
 - Hide the menu bar icon
-- kadro:// links: off, ask, allow
 - Daily update check, Check Now
+- Advanced: upload to S3-compatible storage, kadro:// links (ask or allow)
 
 **Capture**
 
@@ -137,7 +138,7 @@ A compact native preferences window uses Space Grotesk typography and Lucide ico
 - Keep the editor above other windows
 - Zoom with the scroll wheel
 
-**Upload**
+**Upload** (shown when upload is on)
 
 - Endpoint, region, bucket, path prefix
 - Access key and secret key, stored in the Keychain
@@ -151,6 +152,7 @@ A compact native preferences window uses Space Grotesk typography and Lucide ico
 - Capture window, capture active window
 - Scrolling capture, pin last screenshot, edit last screenshot, upload last screenshot, library, recognize text, show the Kadro menu
 - Every shortcut can be recorded or cleared, with conflict detection against Kadro, macOS and other apps
+- Unchecking an action removes it from the menu and turns off its shortcut
 
 **About**
 
