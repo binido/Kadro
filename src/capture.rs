@@ -177,7 +177,12 @@ pub fn capture_active_window(mtm: MainThreadMarker) {
     }
 }
 
-/// Снимает окно без тени.
+/// Запас кадра вокруг окна в точках, больше самой широкой тени. В кадр впритык ScreenCaptureKit
+/// кладёт окно уменьшенным - с тенью всегда, без тени у полноэкранного окна на внешнем дисплее.
+/// Пустое поле срезает output::deliver.
+const WINDOW_MARGIN: f64 = 200.0;
+
+/// Снимает окно, с тенью или без по настройкам.
 pub fn capture_window(window_id: CGWindowID) {
     with_content(move |content| {
         let Some(window) = unsafe { content.windows() }.iter().find(|w| unsafe { w.windowID() } == window_id) else {
@@ -187,7 +192,8 @@ pub fn capture_window(window_id: CGWindowID) {
         let scale = f64::from(unsafe { filter.pointPixelScale() });
         let frame = unsafe { window.frame() };
         let config = unsafe { SCStreamConfiguration::new() };
-        set_output_size(&config, frame.size, scale);
+        let padded = CGSize::new(frame.size.width + WINDOW_MARGIN, frame.size.height + WINDOW_MARGIN);
+        set_output_size(&config, padded, scale);
         unsafe {
             // Тень нужна, если за окном будет фон или прозрачность.
             config.setIgnoreShadowsSingleWindow(Settings::load().window_background == WindowBackground::Clean);

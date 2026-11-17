@@ -85,6 +85,9 @@ fn take_route() -> Route {
 
 /// Отдаёт снимок: подкладывает фон за окном, если он выбран, затем копирует, сохраняет и показывает.
 pub fn deliver(image: &CGImage, scale: f64, shot: &Shot) {
+    // Окно снимается в кадр с запасом, пустое поле вокруг него лишнее во всех режимах.
+    let cropped = if shot.kind == Kind::Window { backdrop::crop_transparent(image) } else { None };
+    let image = cropped.as_deref().unwrap_or(image);
     // Снимок для редактора или распознавания не копируется, не сохраняется и не становится последним.
     match take_route() {
         Route::Editor => {
@@ -110,7 +113,7 @@ pub fn deliver(image: &CGImage, scale: f64, shot: &Shot) {
         });
     }
     if shot.kind == Kind::Window && background == WindowBackground::Clean {
-        // С прозрачными углами и полями снимок на светлом фоне получает белые клинья и полосы.
+        // С прозрачными углами снимок на светлом фоне получает белые клинья вокруг скруглений.
         let squared = backdrop::square_corners(image, scale);
         return finish(squared.as_deref().unwrap_or(image), scale, shot);
     }
