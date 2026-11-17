@@ -376,8 +376,8 @@ fn bitmap(width: usize, height: usize) -> Option<CFRetained<CGContext>> {
 /// Наибольший радиус скругления окна в точках. Прозрачный край шире - форма самого окна, а не угол.
 const MAX_CORNER: f64 = 40.0;
 
-/// Достраивает скруглённые углы снятого окна до прямоугольника цветом его же края.
-/// Возвращает None, если холст не создался.
+/// Достраивает скруглённые углы снятого окна до прямоугольника цветом его же края и срезает
+/// целиком прозрачные поля. Возвращает None, если холст не создался.
 pub fn square_corners(image: &CGImage, scale: f64) -> Option<CFRetained<CGImage>> {
     let (width, height) = (CGImage::width(Some(image)), CGImage::height(Some(image)));
     let mut pixels = vec![0u32; width * height];
@@ -397,7 +397,29 @@ pub fn square_corners(image: &CGImage, scale: f64) -> Option<CFRetained<CGImage>
     let bounds = CGRect::new(CGPoint::ZERO, CGSize::new(width as f64, height as f64));
     CGContext::draw_image(Some(&context), bounds, Some(image));
     fill_corners(&mut pixels, width, (MAX_CORNER * scale) as usize);
-    CGBitmapContextCreateImage(Some(&context))
+    let squared = CGBitmapContextCreateImage(Some(&context))?;
+    // Полноэкранное окно на внешнем дисплее ScreenCaptureKit отдаёт уменьшенным и прижатым к левому
+    // нижнему углу кадра. Иначе сверху и справа остаётся пустая полоса с размытым краем.
+    match opaque_bounds(&pixels, width) {
+        Some((x, y, w, h)) if (w, h) != (width, height) => {
+            let rect = CGRect::new(CGPoint::new(x as f64, y as f64), CGSize::new(w as f64, h as f64));
+            CGImage::with_image_in_rect(Some(&squared), rect)
+        }
+        _ => Some(squared),
+    }
+}
+
+/// Прямоугольник x, y, ширина, высота вокруг всех непрозрачных пикселей, начало вверху слева.
+/// None, если непрозрачных нет.
+fn opaque_bounds(pixels: &[u32], width: usize) -> Option<(usize, usize, usize, usize)> {
+    let opaque = |pixel: &u32| pixel >> 24 == 0xFF;
+    let rows: Vec<usize> =
+        (0..pixels.len() / width).filter(|y| pixels[y * width..(y + 1) * width].iter().any(opaque)).collect();
+    let (&top, &bottom) = (rows.first()?, rows.last()?);
+    let column = |x: &usize| (top..=bottom).any(|y| opaque(&pixels[y * width + x]));
+    let left = (0..width).find(column)?;
+    let right = (0..width).rfind(column)?;
+    Some((left, top, right - left + 1, bottom - top + 1))
 }
 
 /// Закрашивает прозрачные края каждой строки цветом ближайшего непрозрачного пикселя.
@@ -560,6 +582,21 @@ mod tests {
         assert_eq!(pixels[5..10], [clear; 5]);
         // край шире max_run
         assert_eq!(pixels[10..], [clear, clear, clear, clear, a]);
+    }
+
+    #[test]
+    fn opaque_bounds_skip_transparent_edges() {
+        let (clear, a) = (0u32, 0xFF11_2233);
+        #[rustfmt::skip]
+        let pixels = [
+            clear, clear, clear, clear,
+            a,     a,     clear, clear,
+            a,     0x8000_0000, clear, clear,
+            0x8000_0000, clear, clear, clear,
+        ];
+        // полупрозрачный край срезается вместе с пустым
+        assert_eq!(opaque_bounds(&pixels, 4), Some((0, 1, 2, 2)));
+        assert_eq!(opaque_bounds(&[clear; 4], 2), None);
     }
 
     #[test]

@@ -110,7 +110,7 @@ pub fn deliver(image: &CGImage, scale: f64, shot: &Shot) {
         });
     }
     if shot.kind == Kind::Window && background == WindowBackground::Clean {
-        // С прозрачными углами снимок на светлом фоне получает белые клинья вокруг скруглений.
+        // С прозрачными углами и полями снимок на светлом фоне получает белые клинья и полосы.
         let squared = backdrop::square_corners(image, scale);
         return finish(squared.as_deref().unwrap_or(image), scale, shot);
     }
