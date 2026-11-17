@@ -1,7 +1,7 @@
-//! Распознавание текста и QR- и штрихкодов на снимке средствами Apple Vision, без сети.
+//! Text, QR code and barcode recognition on a screenshot with Apple Vision, offline.
 //!
-//! Распознавание идёт вне главного потока, а результат показывается на главном: ссылку из кода
-//! предлагается открыть, остальное копируется в буфер обмена.
+//! Recognition runs off the main thread and the result is shown on the main thread: a link from a code
+//! is offered to open, everything else is copied to the clipboard.
 
 use objc2::{AnyThread, MainThreadMarker};
 use objc2_app_kit::{
@@ -17,16 +17,16 @@ use objc2_vision::{
 use crate::preview;
 use crate::settings::Settings;
 
-/// Что нашлось на снимке.
+/// What was found on the screenshot.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Found {
-    /// Строки текста сверху вниз.
+    /// Text lines from top to bottom.
     pub lines: Vec<String>,
-    /// Содержимое QR- и штрихкодов без повторов.
+    /// Contents of QR codes and barcodes, without duplicates.
     pub codes: Vec<String>,
 }
 
-/// Распознаёт текст и коды. `language` - код языка Vision, None - языки системы и английский.
+/// Recognizes text and codes. `language` is a Vision language code, None means system languages and English.
 pub fn recognize(image: &CGImage, language: Option<&str>) -> Found {
     let text = VNRecognizeTextRequest::new();
     text.setRecognitionLevel(VNRequestTextRecognitionLevel::Accurate);
@@ -67,14 +67,14 @@ pub fn recognize(image: &CGImage, language: Option<&str>) -> Found {
     Found { lines, codes }
 }
 
-/// Флаг командной строки: Kadro распознаёт перечисленные файлы, печатает итог и выходит.
+/// Command line flag: Kadro recognizes the listed files, prints the result and exits.
 const CHILD_FLAG: &str = "--recognize";
-/// Разделитель строк и кодов в выводе отдельного процесса.
+/// Separator between lines and codes in the separate process output.
 const SEPARATOR: char = '\u{1e}';
 
-/// Распознаёт файлы в отдельном процессе Kadro. Vision после работы держит в процессе
-/// десятки мегабайт моделей, а отдельный процесс отдаёт их системе, когда выходит.
-/// Вызывается только вне главного потока. Для файла, который не прочитался, результат пустой.
+/// Recognizes files in a separate Kadro process. After running, Vision keeps tens of megabytes
+/// of models in the process, and a separate process returns them to the system when it exits.
+/// Called only off the main thread. A file that could not be read gets an empty result.
 pub fn recognize_files(paths: &[std::path::PathBuf], language: Option<&str>) -> Vec<Found> {
     let output = std::env::current_exe().and_then(|exe| {
         std::process::Command::new(exe).arg(CHILD_FLAG).arg(language.unwrap_or("-")).args(paths).output()
@@ -91,8 +91,8 @@ pub fn recognize_files(paths: &[std::path::PathBuf], language: Option<&str>) -> 
     found
 }
 
-/// Если Kadro запущен для распознавания, распознаёт файлы из аргументов, печатает
-/// по строке на файл и возвращает true. Иначе ничего не делает.
+/// If Kadro was launched for recognition, recognizes the files from the arguments, prints
+/// one line per file and returns true. Otherwise does nothing.
 pub fn run_child() -> bool {
     let mut args = std::env::args().skip(1);
     if args.next().as_deref() != Some(CHILD_FLAG) {
@@ -110,7 +110,7 @@ pub fn run_child() -> bool {
     true
 }
 
-/// Итог одной картинки в одну строку: строки текста, табуляция, содержимое кодов.
+/// Result for one image on one line: text lines, a tab, code contents.
 fn format_found(found: &Found) -> String {
     let clean = |text: &String| text.chars().map(|c| if c.is_control() { ' ' } else { c }).collect::<String>();
     let join = |items: &[String]| items.iter().map(clean).collect::<Vec<_>>().join(&SEPARATOR.to_string());
@@ -123,7 +123,7 @@ fn parse_found(line: &str) -> Found {
     Found { lines: split(lines), codes: split(codes) }
 }
 
-/// Языки, которые Vision умеет распознавать.
+/// Languages Vision can recognize.
 pub fn languages() -> Vec<String> {
     let request = VNRecognizeTextRequest::new();
     request.setRecognitionLevel(VNRequestTextRecognitionLevel::Accurate);
@@ -132,14 +132,14 @@ pub fn languages() -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Предпочитаемые языки системы, которые Vision поддерживает, и английский в конце.
+/// Preferred system languages that Vision supports, with English at the end.
 fn system_languages(request: &VNRecognizeTextRequest) -> Vec<String> {
     let supported: Vec<String> = unsafe { request.supportedRecognitionLanguagesAndReturnError() }
         .map(|list| list.iter().map(|l| l.to_string()).collect())
         .unwrap_or_default();
     let mut chosen: Vec<String> = Vec::new();
     for preferred in NSLocale::preferredLanguages().iter().map(|l| l.to_string()) {
-        // Система отдаёт «ru-RU» или «ru», у Vision встречаются оба вида.
+        // The system reports "ru-RU" or "ru", Vision has both forms.
         let base = preferred.split('-').next().unwrap_or_default().to_string();
         let found = supported.iter().find(|s| **s == preferred || s.split('-').next() == Some(base.as_str()));
         if let Some(language) = found
@@ -154,8 +154,8 @@ fn system_languages(request: &VNRecognizeTextRequest) -> Vec<String> {
     chosen
 }
 
-/// Текст из строк: каждая с новой строки или всё в одну строку. При склейке перенос
-/// с дефисом посреди слова соединяет его без пробела.
+/// Text from lines: each on its own line or all on one line. When joining, a hyphenated
+/// break in the middle of a word joins it without a space.
 pub fn join(lines: &[String], single_line: bool) -> String {
     if !single_line {
         return lines.join("\n");
@@ -173,13 +173,13 @@ pub fn join(lines: &[String], single_line: bool) -> String {
     text
 }
 
-/// Ссылка из содержимого кода, если это веб-адрес.
+/// Link from code contents, if it is a web address.
 pub fn link(payload: &str) -> Option<&str> {
     let lower = payload.to_lowercase();
     (lower.starts_with("https://") || lower.starts_with("http://")).then_some(payload)
 }
 
-/// Распознаёт снимок вне главного потока и показывает результат на главном экране.
+/// Recognizes the screenshot off the main thread and shows the result on the main thread.
 pub fn recognize_and_show(image: objc2_core_foundation::CFRetained<CGImage>) {
     let settings = Settings::load();
     let language = settings.recognition_language.clone();
@@ -202,7 +202,7 @@ pub fn recognize_and_show(image: objc2_core_foundation::CFRetained<CGImage>) {
     });
 }
 
-/// Ссылку из кода предлагает открыть, остальные коды или текст копирует.
+/// Offers to open a link from a code, copies other codes or text.
 pub fn show(mtm: MainThreadMarker, found: &Found, single_line: bool) {
     let screen = NSScreen::mainScreen(mtm);
     let popup = |text: &str| {
@@ -246,7 +246,7 @@ fn offer_link(mtm: MainThreadMarker, url: &str) {
 fn copy(text: &str) {
     let pasteboard = NSPasteboard::generalPasteboard();
     pasteboard.clearContents();
-    // SAFETY: системная константа типа буфера обмена живёт весь процесс.
+    // SAFETY: the system pasteboard type constant lives for the whole process.
     pasteboard.setString_forType(&NSString::from_str(text), unsafe { NSPasteboardTypeString });
 }
 

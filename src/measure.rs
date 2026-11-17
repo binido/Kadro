@@ -1,39 +1,39 @@
-//! Измерения по пикселям снимка: цвет точки, его запись для копирования и границы ровного участка.
+//! Measurements on screenshot pixels: point color, its text for copying and the bounds of a flat area.
 //!
-//! Пиксели читаются в sRGB, как их показывают веб-инструменты и «Цифровой колориметр».
+//! Pixels are read in sRGB, the way web tools and Digital Color Meter show them.
 
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{
     CGBitmapContextCreate, CGColorSpace, CGContext, CGImage, CGImageAlphaInfo, kCGColorSpaceSRGB,
 };
 
-/// Записи цвета для выпадающего списка пипетки, по номеру варианта.
+/// Color formats for the color picker popup menu, by variant index.
 pub const FORMATS: [&str; 3] = ["HEX", "RGB", "HSL"];
 
-/// Насколько может отличаться канал соседнего пикселя, чтобы он считался тем же цветом.
+/// How much a neighbor pixel channel may differ and still count as the same color.
 const EDGE_THRESHOLD: u8 = 16;
 
-/// Цвет одного пикселя. Начало координат вверху слева.
+/// Color of one pixel. Origin at the top left.
 pub fn pixel(image: &CGImage, x: usize, y: usize) -> Option<[u8; 3]> {
     strip(image, x, y, 1, 1)?.first().copied()
 }
 
-/// Все пиксели картинки по строкам сверху вниз.
+/// All image pixels row by row from top to bottom.
 pub fn pixels(image: &CGImage) -> Option<Vec<[u8; 3]>> {
     strip(image, 0, 0, CGImage::width(Some(image)), CGImage::height(Some(image)))
 }
 
-/// Строка пикселей по всей ширине картинки.
+/// Pixel row across the full image width.
 pub fn row(image: &CGImage, y: usize) -> Option<Vec<[u8; 3]>> {
     strip(image, 0, y, CGImage::width(Some(image)), 1)
 }
 
-/// Столбец пикселей по всей высоте картинки.
+/// Pixel column across the full image height.
 pub fn column(image: &CGImage, x: usize) -> Option<Vec<[u8; 3]>> {
     strip(image, x, 0, 1, CGImage::height(Some(image)))
 }
 
-/// Пиксели прямоугольника в sRGB по строкам сверху вниз.
+/// Rectangle pixels in sRGB row by row from top to bottom.
 fn strip(image: &CGImage, x: usize, y: usize, width: usize, height: usize) -> Option<Vec<[u8; 3]>> {
     if x + width > CGImage::width(Some(image)) || y + height > CGImage::height(Some(image)) {
         return None;
@@ -41,9 +41,9 @@ fn strip(image: &CGImage, x: usize, y: usize, width: usize, height: usize) -> Op
     let rect = CGRect::new(CGPoint::new(x as f64, y as f64), CGSize::new(width as f64, height as f64));
     let part = CGImage::with_image_in_rect(Some(image), rect)?;
     let mut bytes = vec![0u8; width * height * 4];
-    // SAFETY: системная константа имени цветового пространства живёт весь процесс.
+    // SAFETY: the system color space name constant lives for the whole process.
     let space = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB }));
-    // SAFETY: буфер на width * height пикселей по 4 байта живёт дольше контекста.
+    // SAFETY: the buffer of width * height 4-byte pixels outlives the context.
     let context = unsafe {
         CGBitmapContextCreate(
             bytes.as_mut_ptr().cast(),
@@ -61,7 +61,7 @@ fn strip(image: &CGImage, x: usize, y: usize, width: usize, height: usize) -> Op
     Some(bytes.as_chunks::<4>().0.iter().map(|&[red, green, blue, _]| [red, green, blue]).collect())
 }
 
-/// Цвет текстом для буфера обмена: `#RRGGBB`, `rgb(r, g, b)` или `hsl(h, s%, l%)`.
+/// Color as text for the clipboard: `#RRGGBB`, `rgb(r, g, b)` or `hsl(h, s%, l%)`.
 pub fn format(color: [u8; 3], format: usize) -> String {
     let [red, green, blue] = color;
     match format {
@@ -74,7 +74,7 @@ pub fn format(color: [u8; 3], format: usize) -> String {
     }
 }
 
-/// Тон в градусах, насыщенность и светлота в процентах.
+/// Hue in degrees, saturation and lightness in percent.
 fn hsl(color: [u8; 3]) -> (f64, f64, f64) {
     let [r, g, b] = color.map(|c| f64::from(c) / 255.0);
     let max = r.max(g).max(b);
@@ -95,12 +95,12 @@ fn hsl(color: [u8; 3]) -> (f64, f64, f64) {
     (sector * 60.0, saturation * 100.0, lightness * 100.0)
 }
 
-/// Цвета почти совпадают: разница каналов не больше порога края.
+/// Colors nearly match: the channel difference is within the edge threshold.
 pub fn similar(a: [u8; 3], b: [u8; 3]) -> bool {
     a.iter().zip(b).all(|(x, y)| x.abs_diff(y) <= EDGE_THRESHOLD)
 }
 
-/// Границы участка того же цвета, что и пиксель `at`, включительно.
+/// Bounds of the area with the same color as pixel `at`, inclusive.
 pub fn span(line: &[[u8; 3]], at: usize) -> (usize, usize) {
     let reference = line[at];
     let same = |p: &[u8; 3]| similar(*p, reference);
@@ -109,7 +109,7 @@ pub fn span(line: &[[u8; 3]], at: usize) -> (usize, usize) {
     (start, end)
 }
 
-/// Подпись линейки: длина в пикселях или в точках экрана, где сняли снимок.
+/// Ruler label: length in pixels or in points of the screen the screenshot was taken on.
 pub fn ruler_label(length: f64, scale: f64, style: usize) -> String {
     if style == 1 {
         let points = length / scale;
@@ -125,12 +125,12 @@ mod tests {
 
     use super::*;
 
-    /// sRGB-картинка из заданных пикселей.
+    /// sRGB image from the given pixels.
     fn image(width: usize, height: usize, pixels: &[[u8; 3]]) -> objc2_core_foundation::CFRetained<CGImage> {
         let mut bytes: Vec<u8> = pixels.iter().flat_map(|p| [p[0], p[1], p[2], 255]).collect();
-        // SAFETY: системная константа имени цветового пространства живёт весь процесс.
+        // SAFETY: the system color space name constant lives for the whole process.
         let space = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB }));
-        // SAFETY: буфер на width * height пикселей по 4 байта живёт до конца функции, а картинка копирует его.
+        // SAFETY: the buffer of width * height 4-byte pixels lives until the end of the function, and the image copies it.
         let context = unsafe {
             CGBitmapContextCreate(
                 bytes.as_mut_ptr().cast(),
@@ -174,7 +174,7 @@ mod tests {
     fn span_stops_at_the_edges_around_the_point() {
         let white = [255, 255, 255];
         let black = [0, 0, 0];
-        // антиалиасинг в пределах порога не считается краем
+        // antialiasing within the threshold does not count as an edge
         let line = [black, white, [250, 250, 250], white, white, black, black];
         assert_eq!(span(&line, 3), (1, 4));
         assert_eq!(span(&line, 5), (5, 6));

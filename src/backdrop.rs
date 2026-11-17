@@ -1,7 +1,7 @@
-//! Подложка под снимком: фон, отступы, тень и скругления, а также фон за окном при захвате окна.
+//! Backdrop under the screenshot: background, padding, shadow and corners, plus the background behind a captured window.
 //!
-//! Подложка - часть документа редактора, поэтому её можно менять и отменять, как любую правку.
-//! Размеры задаются в точках и переводятся в пиксели через масштаб снимка.
+//! The backdrop is part of the editor document, so it can be changed and undone like any edit.
+//! Sizes are in points and are converted to pixels with the screenshot scale.
 
 use std::path::{Path, PathBuf};
 use std::ptr;
@@ -25,7 +25,7 @@ use crate::annotation::Color;
 use crate::capture::Shot;
 use crate::{measure, preview};
 
-/// Пропорции холста для выпадающего списка: подпись и ширина к высоте. 0 - без ограничения.
+/// Canvas aspect ratios for the popup menu: label and width to height. 0 means unconstrained.
 pub const ASPECTS: [(&str, f64); 7] = [
     ("Free", 0.0),
     ("1:1", 1.0),
@@ -36,10 +36,10 @@ pub const ASPECTS: [(&str, f64); 7] = [
     ("9:16", 9.0 / 16.0),
 ];
 
-/// Виды фона для выпадающего списка, по порядку `Fill::kind`.
+/// Background kinds for the popup menu, in `Fill::kind` order.
 pub const KINDS: [&str; 4] = ["Gradient", "Mesh", "Solid", "Blurred"];
 
-/// Подобранные пары цветов градиентов.
+/// Curated gradient color pairs.
 const GRADIENTS: [[u32; 2]; 10] = [
     [0xff_6a88, 0xff_99ac],
     [0x4f_acfe, 0x00_f2fe],
@@ -53,7 +53,7 @@ const GRADIENTS: [[u32; 2]; 10] = [
     [0x2b_5876, 0x4e_4376],
 ];
 
-/// Подобранные четвёрки цветов для углов: левый верхний, правый верхний, правый нижний, левый нижний.
+/// Curated corner color sets: top left, top right, bottom right, bottom left.
 const MESHES: [[u32; 4]; 6] = [
     [0xff_9a9e, 0xfa_d0c4, 0xa1_c4fd, 0xc2_e9fb],
     [0x84_fab0, 0x8f_d3f4, 0xa1_8cd1, 0xfb_c2eb],
@@ -63,20 +63,20 @@ const MESHES: [[u32; 4]; 6] = [
     [0xff_ecd2, 0xfc_b69f, 0xff_9a9e, 0xfe_cfef],
 ];
 
-/// Чем залит фон.
+/// Background fill.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Fill {
-    /// Линейный градиент и его угол в градусах.
+    /// Linear gradient and its angle in degrees.
     Linear([Color; 2], f64),
-    /// Плавный переход между цветами четырёх углов.
+    /// Smooth blend between the colors of the four corners.
     Mesh([Color; 4]),
     Solid(Color),
-    /// Сам снимок, растянутый на весь фон и размытый.
+    /// The screenshot itself, stretched over the whole background and blurred.
     Blurred,
 }
 
 impl Fill {
-    /// Номер вида в `KINDS`.
+    /// Index of the kind in `KINDS`.
     pub fn kind(self) -> usize {
         match self {
             Fill::Linear(..) => 0,
@@ -86,7 +86,7 @@ impl Fill {
         }
     }
 
-    /// Первый подобранный фон вида `kind`. Для однотонного - `solid`.
+    /// First curated background of `kind`. For a solid fill, `solid`.
     pub fn of_kind(kind: usize, solid: Color) -> Self {
         match kind {
             0 => Fill::Linear(GRADIENTS[0].map(hex), 135.0),
@@ -96,7 +96,7 @@ impl Fill {
         }
     }
 
-    /// Другой подобранный фон того же вида. `seed` выбирает, какой именно.
+    /// Another curated background of the same kind. `seed` picks which one.
     pub fn randomized(self, seed: u32) -> Self {
         let seed = seed as usize;
         match self {
@@ -113,7 +113,7 @@ impl Fill {
         }
     }
 
-    /// Градиент в обратную сторону.
+    /// The gradient reversed.
     pub fn reversed(self) -> Self {
         match self {
             Fill::Linear([from, to], angle) => Fill::Linear([to, from], angle),
@@ -128,23 +128,23 @@ fn hex(rgb: u32) -> Color {
     Color { red: channel(16), green: channel(8), blue: channel(0), alpha: 1.0 }
 }
 
-/// Подложка снимка в редакторе.
+/// Screenshot backdrop in the editor.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Backdrop {
     pub fill: Fill,
-    /// Отступ от снимка до края холста, в точках.
+    /// Padding from the screenshot to the canvas edge, in points.
     pub padding: f64,
-    /// Сила тени под снимком, от 0 до 1.
+    /// Shadow strength under the screenshot, from 0 to 1.
     pub shadow: f64,
-    /// Скругление углов снимка, в точках.
+    /// Screenshot corner radius, in points.
     pub radius: f64,
-    /// Скругление углов всего холста, в точках. Углы становятся прозрачными.
+    /// Corner radius of the whole canvas, in points. The corners become transparent.
     pub outer_radius: f64,
-    /// Поле цвета края снимка вокруг него, в точках.
+    /// Margin around the screenshot filled with its edge color, in points.
     pub inset: f64,
-    /// Номер пропорций в `ASPECTS`.
+    /// Index of the aspect ratio in `ASPECTS`.
     pub aspect: usize,
-    /// Обрезать по краям снимка ровный фон, прежде чем класть снимок на подложку.
+    /// Crop flat background off the screenshot edges before placing it on the backdrop.
     pub auto_crop: bool,
 }
 
@@ -163,7 +163,7 @@ impl Default for Backdrop {
     }
 }
 
-/// Сколько пикселей ровного фона срезать с каждого края.
+/// How many pixels of flat background to crop from each edge.
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub struct Trim {
     pub left: usize,
@@ -172,18 +172,18 @@ pub struct Trim {
     pub bottom: usize,
 }
 
-/// Где что лежит на холсте с подложкой, в пикселях, начало вверху слева.
+/// Where everything sits on the backdrop canvas, in pixels, origin at the top left.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Layout {
     pub width: f64,
     pub height: f64,
-    /// Карточка снимка вместе с полем `inset`.
+    /// Screenshot card including the `inset` margin.
     pub card: (f64, f64, f64, f64),
-    /// Куда попадает левый верхний пиксель необрезанного снимка.
+    /// Where the top left pixel of the uncropped screenshot lands.
     pub content: (f64, f64),
 }
 
-/// Раскладка снимка `width` × `height` на подложке.
+/// Layout of a `width` x `height` screenshot on the backdrop.
 pub fn layout(width: f64, height: f64, trim: Trim, backdrop: &Backdrop, scale: f64) -> Layout {
     let visible_width = width - (trim.left + trim.right) as f64;
     let visible_height = height - (trim.top + trim.bottom) as f64;
@@ -192,7 +192,7 @@ pub fn layout(width: f64, height: f64, trim: Trim, backdrop: &Backdrop, scale: f
     let (card_width, card_height) = (visible_width + 2.0 * inset, visible_height + 2.0 * inset);
     let (mut canvas_width, mut canvas_height) = (card_width + 2.0 * padding, card_height + 2.0 * padding);
     let ratio = ASPECTS.get(backdrop.aspect).map_or(0.0, |aspect| aspect.1);
-    // Холст растёт только вширь или ввысь, снимок не уменьшается.
+    // The canvas only grows in width or height, the screenshot never shrinks.
     if ratio > 0.0 {
         if canvas_width / canvas_height < ratio {
             canvas_width = (canvas_height * ratio).round();
@@ -210,7 +210,7 @@ pub fn layout(width: f64, height: f64, trim: Trim, backdrop: &Backdrop, scale: f
     }
 }
 
-/// Края снимка, залитые тем же цветом, что и левый верхний пиксель. Хотя бы пиксель остаётся.
+/// Screenshot edges filled with the same color as the top left pixel. At least one pixel remains.
 pub fn trim(image: &CGImage) -> Trim {
     let (width, height) = (CGImage::width(Some(image)), CGImage::height(Some(image)));
     let Some(pixels) = measure::pixels(image) else { return Trim::default() };
@@ -225,7 +225,7 @@ pub fn trim(image: &CGImage) -> Trim {
     Trim { left, top, right, bottom }
 }
 
-/// Кладёт снимок на подложку. Возвращает картинку и раскладку.
+/// Places the screenshot on the backdrop. Returns the image and the layout.
 pub fn compose(content: &CGImage, backdrop: &Backdrop, scale: f64) -> Option<(CFRetained<CGImage>, Layout)> {
     let (width, height) = (CGImage::width(Some(content)) as f64, CGImage::height(Some(content)) as f64);
     let trimmed = if backdrop.auto_crop { trim(content) } else { Trim::default() };
@@ -234,7 +234,7 @@ pub fn compose(content: &CGImage, backdrop: &Backdrop, scale: f64) -> Option<(CF
     let ns = NSGraphicsContext::graphicsContextWithCGContext_flipped(&context, false);
     NSGraphicsContext::saveGraphicsState_class();
     NSGraphicsContext::setCurrentContext(Some(&ns));
-    // У AppKit здесь начало внизу слева, у раскладки - вверху.
+    // AppKit has the origin at the bottom left here, the layout at the top.
     let rect = |x: f64, y: f64, w: f64, h: f64| NSRect::new(NSPoint::new(x, layout.height - y - h), NSSize::new(w, h));
     let canvas = rect(0.0, 0.0, layout.width, layout.height);
     let outer = backdrop.outer_radius * scale;
@@ -245,7 +245,7 @@ pub fn compose(content: &CGImage, backdrop: &Backdrop, scale: f64) -> Option<(CF
     let card = rect(card_x, card_y, card_width, card_height);
     let radius = backdrop.radius * scale;
     let shape = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(card, radius, radius);
-    // Поле вокруг снимка - цвет его края, так снимок на карточке выглядит цельным.
+    // The margin around the screenshot uses its edge color, so the screenshot looks seamless on the card.
     let edge = measure::pixel(content, trimmed.left, trimmed.top).unwrap_or([255, 255, 255]);
     let [red, green, blue] = edge.map(|c| f64::from(c) / 255.0);
     let edge = NSColor::colorWithSRGBRed_green_blue_alpha(red, green, blue, 1.0);
@@ -279,14 +279,14 @@ fn fill(fill: &Fill, content: &CGImage, canvas: NSRect, scale: f64) {
         }
         Fill::Linear([from, to], angle) => {
             let gradient = NSGradient::initWithStartingColor_endingColor(NSGradient::alloc(), &ns(from), &ns(to));
-            // Угол AppKit отсчитывается против часовой стрелки, 135° - от левого верхнего угла к правому нижнему.
+            // The AppKit angle runs counterclockwise, 135° goes from the top left corner to the bottom right.
             if let Some(gradient) = gradient {
                 gradient.drawInRect_angle(canvas, -angle + 90.0);
             }
         }
         Fill::Mesh(corners) => {
-            // Картинка 2 × 2 из цветов углов, растянутая со сглаживанием, даёт плавный переход между ними.
-            // Она шире холста вдвое, чтобы центры её пикселей пришлись точно на углы.
+            // A 2 x 2 image of the corner colors, stretched with smoothing, gives a smooth blend between them.
+            // It is twice as wide as the canvas so its pixel centers land exactly on the corners.
             let Some(tiny) = corner_image(corners) else { return };
             let Some(context) = NSGraphicsContext::currentContext() else { return };
             context.saveGraphicsState();
@@ -319,15 +319,15 @@ fn fill(fill: &Fill, content: &CGImage, canvas: NSRect, scale: f64) {
     }
 }
 
-/// Картинка из четырёх пикселей: левый верхний, правый верхний, правый нижний, левый нижний.
+/// Four-pixel image: top left, top right, bottom right, bottom left.
 fn corner_image(corners: [Color; 4]) -> Option<CFRetained<CGImage>> {
     let byte = |v: f64| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
     let rgba = |c: Color| [byte(c.red), byte(c.green), byte(c.blue), 255];
     let [top_left, top_right, bottom_right, bottom_left] = corners.map(rgba);
     let mut bytes: Vec<u8> = [top_left, top_right, bottom_left, bottom_right].concat();
-    // SAFETY: системная константа имени цветового пространства живёт весь процесс.
+    // SAFETY: the system color space name constant lives for the whole process.
     let space = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB }));
-    // SAFETY: буфер на 2 × 2 пикселя по 4 байта живёт дольше контекста, а картинка копирует его.
+    // SAFETY: the 2 x 2 buffer of 4-byte pixels outlives the context, and the image copies it.
     let context = unsafe {
         CGBitmapContextCreate(bytes.as_mut_ptr().cast(), 2, 2, 8, 8, space.as_deref(), CGImageAlphaInfo::NoneSkipLast.0)
     }?;
@@ -355,11 +355,11 @@ fn draw(image: &CGImage, rect: NSRect) {
     }
 }
 
-/// Прозрачный холст в sRGB.
+/// Transparent sRGB canvas.
 fn bitmap(width: usize, height: usize) -> Option<CFRetained<CGContext>> {
-    // SAFETY: системная константа имени цветового пространства живёт весь процесс.
+    // SAFETY: the system color space name constant lives for the whole process.
     let space = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB }));
-    // SAFETY: буфер null - Core Graphics выделит его сам.
+    // SAFETY: a null buffer makes Core Graphics allocate it.
     unsafe {
         CGBitmapContextCreate(
             ptr::null_mut(),
@@ -373,11 +373,11 @@ fn bitmap(width: usize, height: usize) -> Option<CFRetained<CGContext>> {
     }
 }
 
-/// Наибольший радиус скругления окна в точках. Прозрачный край шире - форма самого окна, а не угол.
+/// Largest window corner radius in points. A wider transparent edge is the window shape, not a corner.
 const MAX_CORNER: f64 = 40.0;
 
-/// Достраивает скруглённые углы снятого окна до прямоугольника цветом его же края.
-/// Возвращает None, если холст не создался.
+/// Fills the rounded corners of a captured window to a rectangle with its own edge color.
+/// Returns None if the canvas could not be created.
 pub fn square_corners(image: &CGImage, scale: f64) -> Option<CFRetained<CGImage>> {
     let width = CGImage::width(Some(image));
     let mut pixels = vec![0u32; width * CGImage::height(Some(image))];
@@ -386,7 +386,7 @@ pub fn square_corners(image: &CGImage, scale: f64) -> Option<CFRetained<CGImage>
     CGBitmapContextCreateImage(Some(&context))
 }
 
-/// Срезает целиком прозрачные поля по краям. None, если срезать нечего или холст не создался.
+/// Crops fully transparent margins. None if there is nothing to crop or the canvas could not be created.
 pub fn crop_transparent(image: &CGImage) -> Option<CFRetained<CGImage>> {
     let (width, height) = (CGImage::width(Some(image)), CGImage::height(Some(image)));
     let mut pixels = vec![0u32; width * height];
@@ -401,11 +401,11 @@ pub fn crop_transparent(image: &CGImage) -> Option<CFRetained<CGImage>> {
     )
 }
 
-/// Рисует картинку в `pixels` в порядке ARGB. Контекст пишет в этот же буфер.
+/// Draws the image into `pixels` in ARGB order. The context writes into the same buffer.
 fn draw_argb(image: &CGImage, pixels: &mut [u32]) -> Option<CFRetained<CGContext>> {
     let (width, height) = (CGImage::width(Some(image)), CGImage::height(Some(image)));
     let space = CGImage::color_space(Some(image));
-    // SAFETY: буфер вмещает width * height пикселей по 4 байта и живёт дольше контекста.
+    // SAFETY: the buffer holds width * height 4-byte pixels and outlives the context.
     let context = unsafe {
         CGBitmapContextCreate(
             pixels.as_mut_ptr().cast(),
@@ -422,8 +422,8 @@ fn draw_argb(image: &CGImage, pixels: &mut [u32]) -> Option<CFRetained<CGContext
     Some(context)
 }
 
-/// Прямоугольник x, y, ширина, высота вокруг всех не до конца прозрачных пикселей, начало вверху слева.
-/// None, если картинка прозрачна целиком.
+/// Rectangle x, y, width, height around all pixels that are not fully transparent, origin at the top left.
+/// None if the image is fully transparent.
 fn visible_bounds(pixels: &[u32], width: usize) -> Option<(usize, usize, usize, usize)> {
     let visible = |pixel: &u32| pixel >> 24 != 0;
     let rows: Vec<usize> =
@@ -435,8 +435,8 @@ fn visible_bounds(pixels: &[u32], width: usize) -> Option<(usize, usize, usize, 
     Some((left, top, right - left + 1, bottom - top + 1))
 }
 
-/// Закрашивает прозрачные края каждой строки цветом ближайшего непрозрачного пикселя.
-/// Пиксели в порядке ARGB, край длиннее `max_run` остаётся прозрачным.
+/// Fills the transparent ends of each row with the color of the nearest opaque pixel.
+/// Pixels are in ARGB order, an edge longer than `max_run` stays transparent.
 fn fill_corners(pixels: &mut [u32], width: usize, max_run: usize) {
     let opaque = |pixel: &u32| pixel >> 24 == 0xFF;
     for row in pixels.chunks_exact_mut(width) {
@@ -454,14 +454,14 @@ fn fill_corners(pixels: &mut [u32], width: usize, max_run: usize) {
     }
 }
 
-/// Обои экрана, где сняли окно, и место этого экрана в глобальных точках CG.
+/// Wallpaper of the screen where the window was captured, and that screen's frame in global CG points.
 pub struct Wallpaper {
     pub path: PathBuf,
     pub screen: CGRect,
 }
 
-/// Подкладывает под снятое с тенью окно обои или цвет. Окно и тень лежат в середине картинки.
-/// `window` - рамка окна в глобальных точках, `scale` - пикселей на точку.
+/// Puts the wallpaper or a color under a window captured with its shadow. Window and shadow sit in the middle.
+/// `window` is the window frame in global points, `scale` is pixels per point.
 pub fn behind_window(
     image: &CGImage,
     scale: f64,
@@ -475,18 +475,18 @@ pub fn behind_window(
     let wallpaper_image = wallpaper.and_then(|w| load(&w.path).map(|image| (image, w.screen)));
     match wallpaper_image {
         Some((picture, screen)) => {
-            // Снимок с тенью в точках, по центру окна.
+            // Screenshot with shadow in points, centered on the window.
             let (points_width, points_height) = (width / scale, height / scale);
             let center = (window.origin.x + window.size.width / 2.0, window.origin.y + window.size.height / 2.0);
             let region = (center.0 - points_width / 2.0, center.1 - points_height / 2.0);
-            // Обои заполняют экран целиком, лишнее по краям обрезается, как в настройках macOS.
+            // The wallpaper fills the whole screen, the excess is cropped like in macOS settings.
             let (picture_width, picture_height) =
                 (CGImage::width(Some(&picture)) as f64, CGImage::height(Some(&picture)) as f64);
             let cover = (screen.size.width / picture_width).max(screen.size.height / picture_height);
             let (fill_width, fill_height) = (picture_width * cover, picture_height * cover);
             let left = screen.origin.x + (screen.size.width - fill_width) / 2.0 - region.0;
             let top = screen.origin.y + (screen.size.height - fill_height) / 2.0 - region.1;
-            // У контекста начало внизу, у глобальных точек - вверху.
+            // The context has the origin at the bottom, global points at the top.
             let rect = CGRect::new(
                 CGPoint::new(left * scale, height - (top + fill_height) * scale),
                 CGSize::new(fill_width * scale, fill_height * scale),
@@ -502,12 +502,12 @@ pub fn behind_window(
     CGBitmapContextCreateImage(Some(&context))
 }
 
-/// Обои экрана, на котором снято окно. None, если macOS их не отдала.
+/// Wallpaper of the screen the window was captured on. None if macOS does not provide it.
 pub fn wallpaper(mtm: MainThreadMarker, shot: &Shot) -> Option<Wallpaper> {
     let screen = preview::screen_for(mtm, shot)?;
     let url = NSWorkspace::sharedWorkspace().desktopImageURLForScreen(&screen)?;
     let path = PathBuf::from(url.path()?.to_string());
-    // Переход между системами координат CG и Cocoa симметричен.
+    // Converting between CG and Cocoa coordinates is symmetric.
     Some(Wallpaper { path, screen: preview::to_cocoa(mtm, screen.frame()) })
 }
 
@@ -517,7 +517,7 @@ fn load(path: &Path) -> Option<CFRetained<CGImage>> {
     unsafe { source.image_at_index(0, None) }
 }
 
-/// Номер для «Перемешать»: меняется от нажатия к нажатию.
+/// Seed for "Shuffle", changes from one click to the next.
 pub fn seed() -> u32 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_micros())
 }
@@ -529,12 +529,12 @@ mod tests {
     #[test]
     fn padding_and_aspect_place_the_card_in_the_middle() {
         let backdrop = Backdrop { padding: 10.0, inset: 2.0, aspect: 1, ..Backdrop::default() };
-        // 100 × 50 пикселей при масштабе 2: поле 4, отступ 20
+        // 100 x 50 pixels at scale 2: margin 4, padding 20
         let placed = layout(100.0, 50.0, Trim::default(), &backdrop, 2.0);
         assert_eq!((placed.width, placed.height), (148.0, 148.0));
         assert_eq!(placed.card, (20.0, 45.0, 108.0, 58.0));
         assert_eq!(placed.content, (24.0, 49.0));
-        // срезанный край сдвигает снимок, чтобы видимая часть встала на место
+        // the cropped edge shifts the screenshot so the visible part stays in place
         let trimmed = layout(
             100.0,
             50.0,
@@ -546,7 +546,7 @@ mod tests {
         assert_eq!(trimmed.content, (14.0, 19.0));
     }
 
-    /// sRGB-картинка, залитая `background`, с прямоугольником `block` цвета `ink`.
+    /// sRGB image filled with `background`, with a `block` rectangle in `ink`.
     fn image(
         width: usize,
         height: usize,
@@ -562,9 +562,9 @@ mod tests {
                 bytes.extend([r, g, b, 255]);
             }
         }
-        // SAFETY: системная константа имени цветового пространства живёт весь процесс.
+        // SAFETY: the system color space name constant lives for the whole process.
         let space = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB }));
-        // SAFETY: буфер живёт до конца функции, а картинка копирует его.
+        // SAFETY: the buffer lives until the end of the function, and the image copies it.
         let context = unsafe {
             CGBitmapContextCreate(
                 bytes.as_mut_ptr().cast(),
@@ -591,9 +591,9 @@ mod tests {
         ];
         fill_corners(&mut pixels, 5, 2);
         assert_eq!(pixels[..5], [a, a, a, b, b]);
-        // целиком прозрачная строка
+        // fully transparent row
         assert_eq!(pixels[5..10], [clear; 5]);
-        // край шире max_run
+        // edge wider than max_run
         assert_eq!(pixels[10..], [clear, clear, clear, clear, a]);
     }
 
@@ -614,7 +614,7 @@ mod tests {
     fn auto_crop_finds_the_content_inside_a_plain_border() {
         let picture = image(20, 10, [255, 255, 255], (8, 3, 4, 2), [0, 0, 0]);
         assert_eq!(trim(&picture), Trim { left: 8, top: 3, right: 8, bottom: 5 });
-        // ровная картинка целиком - остаётся хотя бы пиксель
+        // fully flat image, at least one pixel remains
         let plain = image(5, 4, [10, 20, 30], (0, 0, 0, 0), [0, 0, 0]);
         let trimmed = trim(&plain);
         assert!(trimmed.left + trimmed.right < 5 && trimmed.top + trimmed.bottom < 4);
@@ -639,7 +639,7 @@ mod tests {
 
     #[test]
     fn solid_colour_fills_behind_a_window_shadow() {
-        // прозрачная картинка 4 × 4 с зелёным квадратом 2 × 2 посередине
+        // transparent 4 x 4 image with a green 2 x 2 square in the middle
         let window_image = {
             let context = bitmap(4, 4).unwrap();
             CGContext::set_rgb_fill_color(Some(&context), 0.0, 1.0, 0.0, 1.0);

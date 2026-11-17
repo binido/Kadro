@@ -1,4 +1,4 @@
-//! Окно настроек: вкладки с параметрами снимков, редактора, загрузки и сочетаниями клавиш.
+//! Settings window: tabs with capture, editor, upload options and keyboard shortcuts.
 
 use std::cell::{Cell, OnceCell, RefCell};
 
@@ -31,7 +31,7 @@ use crate::{assets, keys, library, output, recognize, updates, upload};
 
 const MARGIN: f64 = 24.0;
 const FIELD_WIDTH: f64 = 240.0;
-/// Наибольшая ширина содержимого окна, до которой его можно растянуть.
+/// Largest window content width it can be stretched to.
 const MAX_WIDTH: f64 = 1000.0;
 const SHORTCUT_WIDTH: f64 = 140.0;
 const REPOSITORY_URL: &str = "https://github.com/binido/Kadro";
@@ -41,18 +41,18 @@ const FONT_SIZE: f64 = 13.0;
 
 thread_local! {
     static WINDOW: RefCell<Option<Retained<NSWindow>>> = const { RefCell::new(None) };
-    // Контроллер у каждого окна свой, т.к. в нём лежат ссылки на контролы этого окна.
+    // Each window has its own controller, because it holds references to that window's controls.
     static CONTROLLER: RefCell<Option<Retained<Controller>>> = const { RefCell::new(None) };
 }
 
 #[derive(Default)]
 struct ControllerIvars {
-    /// Радиокнопка "Nothing" в выборе, что показать после снимка.
+    /// "Nothing" radio button in the choice of what to show after a screenshot.
     show_nothing: OnceCell<Retained<NSButton>>,
     copy: OnceCell<Retained<NSButton>>,
     save: OnceCell<Retained<NSButton>>,
     directory: OnceCell<Retained<NSButton>>,
-    /// Итог проверки подключения к хранилищу.
+    /// Result of the storage connection check.
     test_status: OnceCell<Retained<NSTextField>>,
     shortcuts: RefCell<Vec<Retained<ShortcutButton>>>,
 }
@@ -66,8 +66,8 @@ define_class!(
     unsafe impl NSObjectProtocol for Controller {}
 
     unsafe impl NSControlTextEditingDelegate for Controller {
-        // Поля сохраняются на каждое изменение, отдельной кнопки нет. Идентификатор поля - ключ
-        // настройки, у ключей доступа - имя записи в Связке ключей, у шаблона имени его нет.
+        // Fields are saved on every change, there is no separate button. The field identifier is the settings
+        // key, for access keys it is the Keychain item name, the name template has none.
         #[unsafe(method(controlTextDidChange:))]
         fn control_text_did_change(&self, notification: &NSNotification) {
             let Some(field) = notification.object().and_then(|o| o.downcast::<NSTextField>().ok()) else { return };
@@ -134,7 +134,7 @@ define_class!(
 
         #[unsafe(method(changeRecognitionLanguage:))]
         fn change_recognition_language(&self, sender: &NSPopUpButton) {
-            // Первый пункт - языки системы, остальные идут в порядке `recognize::languages`.
+            // The first item is the system languages, the rest follow `recognize::languages` order.
             let index = sender.indexOfSelectedItem();
             let language = usize::try_from(index - 1).ok().and_then(|i| recognize::languages().get(i).cloned());
             settings::set_string(settings::RECOGNITION_LANGUAGE, language.as_deref().unwrap_or(""));
@@ -165,7 +165,7 @@ define_class!(
             store_choice::<LinkExpiry>(sender);
         }
 
-        // Проверка идёт в сети, поэтому вне главного потока, а итог пишется под кнопкой.
+        // The check goes over the network, so off the main thread, and the result is written under the button.
         #[unsafe(method(testUpload:))]
         fn test_upload(&self, _sender: &NSButton) {
             let Some(status) = self.ivars().test_status.get() else { return };
@@ -209,7 +209,7 @@ define_class!(
             rebuild_later();
         }
 
-        // Номер действия в Action::ALL лежит в tag флажка.
+        // The action index in Action::ALL is in the checkbox tag.
         #[unsafe(method(toggleAction:))]
         fn toggle_action(&self, sender: &NSButton) {
             let Some(action) = usize::try_from(sender.tag()).ok().and_then(|i| Action::ALL.get(i).copied()) else {
@@ -298,7 +298,7 @@ define_class!(
             }
         }
 
-        // Адрес ссылки лежит в идентификаторе кнопки.
+        // The link address is in the button identifier.
         #[unsafe(method(openLink:))]
         fn open_link(&self, sender: &NSButton) {
             if let Some(url) = sender.identifier().and_then(|address| NSURL::URLWithString(&address)) {
@@ -341,8 +341,8 @@ impl Controller {
         [&ivars.copy, &ivars.save].map(|cell| &**cell.get().expect("built with the window"))
     }
 
-    /// Снимок должен куда-то попасть: в превью, редактор, буфер или файл.
-    /// Поэтому последнее включённое из них выключить нельзя.
+    /// A screenshot has to go somewhere: preview, editor, clipboard or file.
+    /// So the last enabled one of them cannot be turned off.
     fn update_destinations(&self) {
         let buttons = self.destinations();
         let shows = Settings::load().after_capture != AfterCapture::Nothing;
@@ -359,7 +359,7 @@ impl Controller {
 struct ShortcutIvars {
     action: Action,
     recording: Cell<bool>,
-    /// Подпись под таблицей с подсказкой или причиной, почему сочетание не подошло.
+    /// Label under the table with a hint or the reason a shortcut was rejected.
     message: Retained<NSTextField>,
 }
 
@@ -385,7 +385,7 @@ define_class!(
             true
         }
 
-        // Сочетания с ⌘ приходят сюда, а не в keyDown.
+        // Shortcuts with ⌘ arrive here, not in keyDown.
         #[unsafe(method(performKeyEquivalent:))]
         fn perform_key_equivalent(&self, event: &NSEvent) -> bool {
             if self.ivars().recording.get() {
@@ -441,7 +441,7 @@ impl ShortcutButton {
         Self::show(&self.ivars().message, text);
     }
 
-    /// Пишет под таблицей, почему сочетание не подошло, или подсказку, если `text` пустой.
+    /// Writes under the table why a shortcut was rejected, or a hint if `text` is empty.
     fn show(message: &NSTextField, text: &str) {
         let (text, color) = if text.is_empty() {
             ("Click a shortcut and press new keys. ⌫ clears it, Esc cancels.", NSColor::secondaryLabelColor())
@@ -497,15 +497,15 @@ impl ShortcutButton {
     }
 }
 
-/// Показывает окно настроек, создавая его при первом открытии.
+/// Shows the settings window, creating it on first open.
 pub fn show(mtm: MainThreadMarker) {
     let window = WINDOW.with_borrow_mut(|slot| slot.get_or_insert_with(|| build_window(mtm)).clone());
     NSApplication::sharedApplication(mtm).activate();
     window.makeKeyAndOrderFront(None);
 }
 
-/// Пересобирает окно на том же месте после того, как флажок открыл или спрятал часть настроек.
-/// Откладывается до следующего цикла, иначе окно закрылось бы посреди обработки нажатия на свой флажок.
+/// Rebuilds the window in the same place after a checkbox showed or hid part of the settings.
+/// Deferred to the next loop, otherwise the window would close in the middle of handling a click on its own checkbox.
 fn rebuild_later() {
     dispatch2::DispatchQueue::main().exec_async(|| {
         let Some(mtm) = MainThreadMarker::new() else { return };
@@ -520,13 +520,13 @@ fn rebuild_later() {
 }
 
 define_class!(
-    /// Вкладки настроек, которые запоминают последнюю открытую.
+    /// Settings tabs that remember the last opened one.
     #[unsafe(super(NSTabViewController, NSViewController, NSResponder, NSObject))]
     #[thread_kind = MainThreadOnly]
     struct Tabs;
 
     impl Tabs {
-        // Новая вкладка получает текущую ширину окна, иначе окно прыгает к ширине, с которой она создана.
+        // A new tab gets the current window width, otherwise the window jumps to the width the tab was created with.
         #[unsafe(method(tabView:willSelectTabViewItem:))]
         fn will_select(&self, tab_view: &NSTabView, item: Option<&NSTabViewItem>) {
             let page = item.and_then(|item| item.viewController(self.mtm()));
@@ -556,7 +556,7 @@ define_class!(
 fn build_window(mtm: MainThreadMarker) -> Retained<NSWindow> {
     let controller = Controller::new(mtm);
     CONTROLLER.set(Some(controller.clone()));
-    // Читается до вкладок, потому что первая добавленная вкладка выбирается и записывает своё название.
+    // Read before the tabs, because the first added tab gets selected and writes its name.
     let last = settings::string(settings::SETTINGS_TAB).unwrap_or_default();
     let tabs: Retained<Tabs> = unsafe { msg_send![Tabs::alloc(mtm), init] };
     tabs.setTabStyle(NSTabViewControllerTabStyle::Toolbar);
@@ -571,12 +571,12 @@ fn build_window(mtm: MainThreadMarker) -> Retained<NSWindow> {
     }
     pages.push(("Shortcuts", assets::KEYBOARD, shortcuts_tab(mtm, &controller)));
     pages.push(("About", assets::INFO, about_tab(mtm, &controller)));
-    // Все вкладки одной ширины, по самой широкой, высота у каждой своя.
+    // All tabs share the width of the widest one, each has its own height.
     let width = pages.iter().map(|(_, _, view)| view.frame().size.width).fold(0.0, f64::max);
     for (title, icon, view) in pages {
         let page = NSViewController::new(mtm);
         page.setView(&view);
-        // Иначе окно берёт размер по умолчанию и прижимает содержимое к низу.
+        // Otherwise the window takes the default size and pushes the content to the bottom.
         page.setPreferredContentSize(NSSize::new(width, view.frame().size.height));
         page.setTitle(Some(&NSString::from_str(title)));
         let item = NSTabViewItem::tabViewItemWithViewController(&page);
@@ -599,31 +599,31 @@ fn build_window(mtm: MainThreadMarker) -> Retained<NSWindow> {
     }
     window.setToolbarStyle(NSWindowToolbarStyle::Preference);
     window.setCollectionBehavior(NSWindowCollectionBehavior::FullScreenNone);
-    // Окно переиспользуется при следующем открытии, его держит WINDOW.
+    // The window is reused on the next open, WINDOW holds it.
     unsafe { window.setReleasedWhenClosed(false) };
     window.center();
     window
 }
 
-/// Окно тянется только в ширину, от `min_width` до [`MAX_WIDTH`]. Высоту задаёт вкладка.
+/// The window stretches only in width, from `min_width` to [`MAX_WIDTH`]. The tab sets the height.
 fn limit(window: &NSWindow, min_width: f64, height: f64) {
     window.setContentMinSize(NSSize::new(min_width, height));
     window.setContentMaxSize(NSSize::new(MAX_WIDTH, height));
 }
 
-/// Строка таблицы настроек.
+/// Settings table row.
 enum Row {
     Field(&'static str, Retained<NSView>),
-    /// Строка, контрол которой растягивается вместе с окном.
+    /// Row whose control stretches with the window.
     Wide(&'static str, Retained<NSView>),
-    /// Заголовок группы строк.
+    /// Row group heading.
     Heading(&'static str),
     Note(Retained<NSView>),
-    /// Строка с флажком на месте подписи.
+    /// Row with a checkbox in place of the label.
     Check(Retained<NSView>, Retained<NSView>),
 }
 
-/// Запуск, строка меню, ссылки и обновления.
+/// Launch, menu bar, links and updates.
 fn general_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView> {
     let current = Settings::load();
     let login = checkbox(mtm, "Launch at login", launches_at_login(), controller, sel!(toggleLaunchAtLogin:));
@@ -658,7 +658,7 @@ fn general_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSVie
     grid(mtm, &rows)
 }
 
-/// Что происходит после снимка, что попадает в кадр и снимок с прокруткой.
+/// What happens after a screenshot, what gets in the frame, and scrolling capture.
 fn capture_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView> {
     let current = Settings::load();
     let after_capture = radios(mtm, current.after_capture, controller, sel!(changeAfterCapture:));
@@ -715,7 +715,7 @@ fn capture_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSVie
     )
 }
 
-/// Куда и как сохраняются снимки, библиотека и распознавание текста.
+/// Where and how screenshots are saved, the library and text recognition.
 fn saving_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView> {
     let current = Settings::load();
 
@@ -739,7 +739,7 @@ fn saving_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView
     file_name.setPlaceholderString(Some(&NSString::from_str(DEFAULT_FILE_NAME_TEMPLATE)));
     file_name.setFont(Some(&assets::font(FONT_SIZE)));
     file_name.widthAnchor().constraintGreaterThanOrEqualToConstant(FIELD_WIDTH).setActive(true);
-    // Делегат не удерживается полем, контроллер живёт в CONTROLLER.
+    // The delegate is not retained by the field, the controller lives in CONTROLLER.
     unsafe { file_name.setDelegate(Some(ProtocolObject::from_ref(controller))) };
     let tokens = label(mtm, "{date} {time} {mode} {app}");
     tokens.setTextColor(Some(&NSColor::secondaryLabelColor()));
@@ -798,7 +798,7 @@ fn editor_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView
     )
 }
 
-/// Хранилище для загрузки: адрес, бакет, ключи, вид ссылки и проверка подключения.
+/// Upload storage: endpoint, bucket, keys, link style and the connection check.
 fn upload_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView> {
     let current = upload::Storage::load();
     let field = |value: &str, placeholder: &str, id: &str, secure: bool| {
@@ -814,7 +814,7 @@ fn upload_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView
         field.setFont(Some(&assets::font(FONT_SIZE)));
         field.setIdentifier(Some(&NSString::from_str(id)));
         field.widthAnchor().constraintGreaterThanOrEqualToConstant(FIELD_WIDTH * 1.5).setActive(true);
-        // Делегат не удерживается полем, контроллер живёт в CONTROLLER.
+        // The delegate is not retained by the field, the controller lives in CONTROLLER.
         unsafe { field.setDelegate(Some(ProtocolObject::from_ref(controller))) };
         view(&field)
     };
@@ -889,7 +889,7 @@ fn shortcuts_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSV
 
     let message = label(mtm, "");
     let upload = settings::upload_enabled();
-    // Флажок слева прячет действие из меню и выключает его сочетание.
+    // The checkbox on the left hides the action from the menu and turns its shortcut off.
     let shortcut = |action: &Action| {
         let button = ShortcutButton::new(mtm, *action, &message);
         button.widthAnchor().constraintEqualToConstant(SHORTCUT_WIDTH).setActive(true);
@@ -904,7 +904,7 @@ fn shortcuts_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSV
         let rows: Vec<_> = std::iter::once(Row::Heading(title)).chain(shown.map(&shortcut)).collect();
         table(mtm, &rows)
     };
-    // Первые семь действий снимают экран, остальные работают с готовыми снимками.
+    // The first seven actions capture the screen, the rest work with finished screenshots.
     let (capture, screenshots) = Action::ALL.split_at(7);
     let columns = side_by_side(mtm, &group("Capture", capture), &group("Screenshots", screenshots));
     let rows = grid(
@@ -915,7 +915,7 @@ fn shortcuts_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSV
     rows
 }
 
-/// Версия, автор, лицензия и ссылка на репозиторий.
+/// Version, author, license and repository link.
 fn about_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView> {
     let icon = NSImageView::new(mtm);
     icon.setImage(NSApplication::sharedApplication(mtm).applicationIconImage().as_deref());
@@ -937,7 +937,7 @@ fn about_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView>
             )
         };
         button.setBordered(false);
-        // Иначе первая ссылка получает фокус при открытии вкладки и обводится рамкой.
+        // Otherwise the first link gets focus when the tab opens and is outlined with a ring.
         button.setRefusesFirstResponder(true);
         button.setFont(Some(&assets::font(FONT_SIZE)));
         button.setContentTintColor(Some(&NSColor::linkColor()));
@@ -977,13 +977,13 @@ fn about_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView>
     );
     stack.setTranslatesAutoresizingMaskIntoConstraints(false);
     container.addSubview(&stack);
-    // Блок по центру окна при любой ширине.
+    // The block is centered in the window at any width.
     stack.centerXAnchor().constraintEqualToAnchor(&container.centerXAnchor()).setActive(true);
     stack.topAnchor().constraintEqualToAnchor_constant(&container.topAnchor(), MARGIN).setActive(true);
     container
 }
 
-/// Таблица настроек с отступами до краёв окна.
+/// Settings table with padding to the window edges.
 fn grid(mtm: MainThreadMarker, rows: &[Row]) -> Retained<NSView> {
     let grid = table(mtm, rows);
     let size = grid.fittingSize();
@@ -993,7 +993,7 @@ fn grid(mtm: MainThreadMarker, rows: &[Row]) -> Retained<NSView> {
     );
     grid.setTranslatesAutoresizingMaskIntoConstraints(false);
     container.addSubview(&grid);
-    // Таблица прижата к верху и тянется в ширину вместе с окном.
+    // The table is pinned to the top and stretches in width with the window.
     grid.leadingAnchor().constraintEqualToAnchor_constant(&container.leadingAnchor(), MARGIN).setActive(true);
     grid.trailingAnchor().constraintEqualToAnchor_constant(&container.trailingAnchor(), -MARGIN).setActive(true);
     grid.topAnchor().constraintEqualToAnchor_constant(&container.topAnchor(), MARGIN).setActive(true);
@@ -1004,12 +1004,12 @@ fn grid(mtm: MainThreadMarker, rows: &[Row]) -> Retained<NSView> {
     container
 }
 
-/// Две таблицы рядом, выровненные по верху.
+/// Two tables side by side, aligned to the top.
 fn side_by_side(mtm: MainThreadMarker, left: &NSGridView, right: &NSGridView) -> Retained<NSView> {
     const GAP: f64 = 40.0;
     let (l, r) = (left.fittingSize(), right.fittingSize());
     let size = NSSize::new(l.width + GAP + r.width, l.height.max(r.height));
-    // Рамки ставятся вручную. В стеке короткая таблица растягивается до высоты длинной и разводит строки.
+    // Frames are set by hand. In a stack the short table stretches to the height of the long one and spreads its rows.
     let pair = NSView::initWithFrame(NSView::alloc(mtm), NSRect::new(NSPoint::ZERO, size));
     left.setFrame(NSRect::new(NSPoint::new(0.0, size.height - l.height), l));
     right.setFrame(NSRect::new(NSPoint::new(l.width + GAP, size.height - r.height), r));
@@ -1020,7 +1020,7 @@ fn side_by_side(mtm: MainThreadMarker, left: &NSGridView, right: &NSGridView) ->
     pair
 }
 
-/// Подписи справа налево к контролам, заголовки и пояснения во всю ширину.
+/// Right-aligned labels for controls, headings and full-width notes.
 fn table(mtm: MainThreadMarker, rows: &[Row]) -> Retained<NSGridView> {
     let mut label_width: f64 = 0.0;
     let cells: Vec<_> = rows
@@ -1048,8 +1048,8 @@ fn table(mtm: MainThreadMarker, rows: &[Row]) -> Retained<NSGridView> {
         })
         .collect();
     let grid = NSGridView::gridViewWithViews(&NSArray::from_retained_slice(&cells), mtm);
-    // Иначе лишняя ширина окна достаётся подписям, а не контролам. В таблице из одних пояснений
-    // подписей нет, и нулевая колонка сжимает окно.
+    // Otherwise the extra window width goes to the labels instead of the controls. A table of notes only
+    // has no labels, and a zero column squeezes the window.
     if label_width > 0.0 {
         grid.columnAtIndex(0).setWidth(label_width);
     }
@@ -1080,7 +1080,7 @@ fn table(mtm: MainThreadMarker, rows: &[Row]) -> Retained<NSGridView> {
     grid
 }
 
-/// Контролы в одну строку, как Copy и Save.
+/// Controls in one row, like Copy and Save.
 fn inline(mtm: MainThreadMarker, views: &[Retained<NSView>]) -> Retained<NSView> {
     let stack = NSStackView::stackViewWithViews(&NSArray::from_retained_slice(views), mtm);
     stack.setSpacing(16.0);
@@ -1102,13 +1102,13 @@ fn checkbox(mtm: MainThreadMarker, title: &str, on: bool, target: &Controller, a
     button
 }
 
-/// Радиокнопки всех вариантов настройки в одну строку. Tag каждой - её номер в [`Choice::ALL`].
+/// Radio buttons for every variant of a setting in one row. Each tag is its index in [`Choice::ALL`].
 fn radios<T: Choice>(mtm: MainThreadMarker, selected: T, target: &Controller, action: Sel) -> Vec<Retained<NSView>> {
     T::ALL
         .iter()
         .enumerate()
         .map(|(index, choice)| {
-            // Радиокнопки с общим action и общим родителем AppKit сам связывает в группу.
+            // AppKit groups radio buttons with a shared action and a shared parent on its own.
             let radio = unsafe {
                 NSButton::radioButtonWithTitle_target_action(
                     &NSString::from_str(choice.title()),
@@ -1125,7 +1125,7 @@ fn radios<T: Choice>(mtm: MainThreadMarker, selected: T, target: &Controller, ac
         .collect()
 }
 
-/// Сохраняет вариант настройки, выбранный радиокнопкой из [`radios`].
+/// Saves the setting variant chosen with a radio button from [`radios`].
 fn store_choice<T: Choice>(radio: &NSButton) {
     if let Some(choice) = usize::try_from(radio.tag()).ok().and_then(|index| T::ALL.get(index)) {
         settings::set_choice(*choice);
@@ -1136,7 +1136,7 @@ fn view(view: &NSView) -> Retained<NSView> {
     view.retain()
 }
 
-/// После смены папки снимков предлагает добавить её снимки в библиотеку.
+/// After the screenshot folder changes, offers to add its screenshots to the library.
 fn offer_reindex(mtm: MainThreadMarker, directory: std::path::PathBuf) {
     if !Settings::load().library {
         return;
@@ -1153,7 +1153,7 @@ fn offer_reindex(mtm: MainThreadMarker, directory: std::path::PathBuf) {
     }
 }
 
-/// Выбор языка распознавания: языки системы или один из языков Vision с английским названием.
+/// Recognition language picker: system languages or one of the Vision languages with its English name.
 fn recognition_languages(
     mtm: MainThreadMarker,
     selected: Option<&str>,
@@ -1187,13 +1187,13 @@ fn state(on: bool) -> isize {
     if on { NSControlStateValueOn } else { NSControlStateValueOff }
 }
 
-/// Запуск при входе работает только у приложения, собранного в .app и лежащего в Программах.
+/// Launch at login works only for an app bundled as .app and placed in Applications.
 fn launches_at_login() -> bool {
     let status = unsafe { SMAppService::mainAppService().status() };
     status == SMAppServiceStatus::Enabled
 }
 
-/// Путь для подписи кнопки: домашняя папка сокращается до `~`.
+/// Path for the button label, the home folder is shortened to `~`.
 fn display_path(path: &str) -> String {
     let home = std::env::var("HOME").ok();
     match home.as_deref().and_then(|home| path.strip_prefix(home)) {

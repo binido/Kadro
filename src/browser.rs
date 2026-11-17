@@ -1,7 +1,7 @@
-//! Окно библиотеки: поиск и снимки плитками трёх размеров или списком.
+//! Library window: search and screenshots as tiles in three sizes or as a list.
 //!
-//! Сетка рисует только видимые ячейки, а миниатюры готовятся в фоне и кешируются на диске,
-//! поэтому тысячи снимков открываются сразу. Закрытое окно ничего не держит в памяти.
+//! The grid draws only visible cells, and thumbnails are prepared in the background and cached on disk,
+//! so thousands of screenshots open instantly. A closed window holds nothing in memory.
 
 use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -35,9 +35,9 @@ use crate::library::{self, Entry};
 use crate::settings::{self, Settings};
 use crate::{editor, keys, output, sigv4, upload};
 
-/// Миниатюры не больше этого числа пикселей по длинной стороне.
+/// Thumbnails are at most this many pixels on the long side.
 const THUMBNAIL_PIXELS: f64 = 520.0;
-/// Сколько миниатюр держать в памяти. Дальние от экрана вытесняются первыми загруженными.
+/// How many thumbnails to keep in memory. The earliest loaded are evicted first.
 const CACHED_THUMBNAILS: usize = 240;
 const SPACING: f64 = 12.0;
 const CAPTION: f64 = 34.0;
@@ -50,11 +50,11 @@ unsafe extern "C" {
 
 thread_local! {
     static BROWSER: RefCell<Option<Retained<Browser>>> = const { RefCell::new(None) };
-    // Закрытое окно живёт до конца обработчика закрытия, освобождать его посреди него нельзя.
+    // The closed window lives until the end of the close handler, it must not be freed in the middle of it.
     static RETIRED: RefCell<Option<Retained<Browser>>> = const { RefCell::new(None) };
 }
 
-/// Вид снимков.
+/// Screenshot view mode.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum View {
     Small,
@@ -76,7 +76,7 @@ impl View {
     }
 }
 
-/// Сколько колонок и какого размера ячейки при ширине `width`.
+/// Number of columns and cell size for a given `width`.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Grid {
     pub columns: usize,
@@ -89,19 +89,19 @@ pub fn grid(view: View, width: f64) -> Grid {
     }
     let tile = view.tile();
     let columns = (((width - SPACING) / (tile + SPACING)).floor() as usize).max(1);
-    // Лишняя ширина делится между колонками, чтобы ряд доходил до правого края.
+    // Extra width is shared between columns so the row reaches the right edge.
     let cell_width = (width - SPACING) / columns as f64 - SPACING;
     Grid { columns, cell: NSSize::new(cell_width, cell_width * 0.66 + CAPTION) }
 }
 
 impl Grid {
-    /// Высота сетки из `count` снимков.
+    /// Height of the grid for `count` screenshots.
     pub fn height(self, count: usize) -> f64 {
         let rows = count.div_ceil(self.columns);
         rows as f64 * (self.cell.height + SPACING) + SPACING
     }
 
-    /// Ячейка снимка `index`, начало вверху слева.
+    /// Cell of screenshot `index`, origin at the top left.
     pub fn rect(self, index: usize) -> NSRect {
         let (row, column) = (index / self.columns, index % self.columns);
         NSRect::new(
@@ -113,7 +113,7 @@ impl Grid {
         )
     }
 
-    /// Снимок под точкой, если она попала в ячейку, а не в зазор.
+    /// Screenshot under the point, if it hit a cell rather than a gap.
     pub fn index_at(self, point: NSPoint, count: usize) -> Option<usize> {
         let column = ((point.x - SPACING) / (self.cell.width + SPACING)).floor();
         let row = ((point.y - SPACING) / (self.cell.height + SPACING)).floor();
@@ -126,7 +126,7 @@ impl Grid {
         (inside && index < count).then_some(index)
     }
 
-    /// Снимки, чьи ячейки пересекают полосу по высоте.
+    /// Screenshots whose cells intersect the vertical band.
     pub fn visible(self, top: f64, bottom: f64, count: usize) -> std::ops::Range<usize> {
         let row_height = self.cell.height + SPACING;
         let first = ((top - SPACING) / row_height).floor().max(0.0) as usize;
@@ -135,7 +135,7 @@ impl Grid {
     }
 }
 
-/// Снимок в окне: запись индекса и её дата для показа и поиска.
+/// Screenshot in the window: the index record and its date for display and search.
 struct Item {
     entry: Entry,
     date: String,
@@ -144,12 +144,12 @@ struct Item {
 
 struct BrowserIvars {
     items: RefCell<Vec<Item>>,
-    /// Номера показанных снимков в `items` после поиска.
+    /// Indexes into `items` of the screenshots shown after search.
     shown: RefCell<Vec<usize>>,
     view: Cell<View>,
     selected: Cell<Option<usize>>,
     thumbnails: RefCell<HashMap<PathBuf, Retained<NSImage>>>,
-    /// Порядок загрузки миниатюр, чтобы вытеснять самые давние.
+    /// Thumbnail load order, used to evict the oldest.
     loaded: RefCell<VecDeque<PathBuf>>,
     loading: RefCell<HashSet<PathBuf>>,
     window: OnceCell<Retained<NSWindow>>,
@@ -227,10 +227,10 @@ define_class!(
             if let Some(browser) = BROWSER.take() {
                 RETIRED.set(Some(browser));
                 DispatchQueue::main().exec_async(|| drop(RETIRED.take()));
-                // Миниатюры освобождаются, но malloc держит их память про запас. Через секунду
-                // Core Animation отпускает свои копии, и свободное возвращается системе.
+                // Thumbnails are freed, but malloc keeps their memory in reserve. A second later
+                // Core Animation releases its copies, and the free memory goes back to the system.
                 let relieve = RcBlock::new(|_timer: NonNull<NSTimer>| {
-                    // SAFETY: null означает все зоны malloc, функция возвращает системе только свободное.
+                    // SAFETY: null means all malloc zones, the function returns only free memory to the system.
                     unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
                 });
                 unsafe { NSTimer::scheduledTimerWithTimeInterval_repeats_block(1.0, false, &relieve) };
@@ -239,7 +239,7 @@ define_class!(
     }
 );
 
-/// Ключ настроек для вида снимков.
+/// Preferences key for the screenshot view mode.
 const VIEW_KEY: &str = "libraryView";
 
 impl Browser {
@@ -247,7 +247,7 @@ impl Browser {
         self.ivars().tiles.get().expect("built with the window")
     }
 
-    /// Перечитывает индекс и применяет поиск.
+    /// Rereads the index and applies the search.
     fn reload(&self) {
         let date_formatter = NSDateFormatter::new();
         date_formatter.setDateFormat(Some(ns_string!("yyyy-MM-dd")));
@@ -284,7 +284,7 @@ impl Browser {
         self.relayout();
     }
 
-    /// Подгоняет высоту сетки под ширину окна и число снимков.
+    /// Fits the grid height to the window width and the number of screenshots.
     fn relayout(&self) {
         let Some(scroll) = self.ivars().scroll.get() else { return };
         let width = scroll.contentSize().width;
@@ -304,7 +304,7 @@ impl Browser {
         std::fs::read(self.selected_path()?).ok().and_then(|bytes| output::decode(&bytes))
     }
 
-    /// Переносит выбранный снимок в Корзину. Оттуда его можно вернуть, поэтому без вопроса.
+    /// Moves the selected screenshot to the Trash. It can be restored from there, so there is no prompt.
     fn trash(&self) {
         let Some(path) = self.selected_path() else { return };
         let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
@@ -322,7 +322,7 @@ impl Browser {
         }
     }
 
-    /// Миниатюра из кеша в памяти. Если её нет, начинает готовить в фоне и возвращает None.
+    /// Thumbnail from the memory cache. If missing, starts preparing it in the background and returns None.
     fn thumbnail(&self, path: &Path, modified: u64) -> Option<Retained<NSImage>> {
         if let Some(image) = self.ivars().thumbnails.borrow().get(path) {
             return Some(image.clone());
@@ -359,13 +359,13 @@ impl Browser {
     }
 }
 
-/// Обёртка, чтобы передать объект на главный поток, где с ним и работают.
+/// Wrapper to pass an object to the main thread, where it is used.
 struct Sendable<T>(T);
-// SAFETY: значение только перевозится между потоками, а используется на главном или в фоне без общего доступа.
+// SAFETY: the value is only moved between threads and is used on the main thread or in the background without shared access.
 unsafe impl<T> Send for Sendable<T> {}
 
 impl<T> Sendable<T> {
-    /// Метод, а не разбор поля: замыкание забирает обёртку целиком, а не её непересылаемое поле.
+    /// A method rather than field destructuring: the closure captures the whole wrapper, not its non-Send field.
     fn into_inner(self) -> T {
         self.0
     }
@@ -376,8 +376,8 @@ fn thumbnails_directory() -> PathBuf {
     home.join("Library/Caches/Kadro/Thumbnails")
 }
 
-/// Миниатюра с диска или новая, которая тут же кладётся в кеш. Имя кеша зависит от пути
-/// и времени изменения, так что изменённый файл получает новую миниатюру.
+/// Thumbnail from disk, or a new one that goes straight into the cache. The cache name depends on the path
+/// and modification time, so a changed file gets a new thumbnail.
 fn cached_thumbnail(path: &Path, modified: u64) -> Option<CFRetained<CGImage>> {
     let key = sigv4::hex(&sigv4::sha256(format!("{}|{modified}", path.display()).as_bytes()));
     let cache = thumbnails_directory().join(format!("{}.jpg", &key[..24]));
@@ -388,7 +388,7 @@ fn cached_thumbnail(path: &Path, modified: u64) -> Option<CFRetained<CGImage>> {
     let source = unsafe { CGImageSource::with_data(&objc2_core_foundation::CFData::from_bytes(&bytes), None) }?;
     let size = CFNumber::new_f64(THUMBNAIL_PIXELS);
     let yes = CFBoolean::new(true);
-    // SAFETY: ключи - константы ImageIO, они живут весь процесс.
+    // SAFETY: the keys are ImageIO constants, they live for the whole process.
     let keys = unsafe {
         [
             kCGImageSourceCreateThumbnailFromImageAlways,
@@ -412,7 +412,7 @@ struct TilesIvars {
 }
 
 define_class!(
-    /// Сетка снимков. Рисует только видимые ячейки.
+    /// Screenshot grid. Draws only visible cells.
     #[unsafe(super(NSView, NSResponder, NSObject))]
     #[thread_kind = MainThreadOnly]
     #[ivars = TilesIvars]
@@ -465,7 +465,7 @@ define_class!(
 );
 
 impl Tiles {
-    /// Меню выбранного снимка под указателем. Мимо снимков меню нет.
+    /// Menu for the selected screenshot under the pointer. There is no menu outside screenshots.
     fn menu_at(&self, event: &NSEvent) -> Option<Retained<NSMenu>> {
         let browser = self.ivars().browser.load()?;
         self.select_at(&browser, event);
@@ -508,7 +508,7 @@ fn context_menu(mtm: MainThreadMarker, browser: &Browser) -> Retained<NSMenu> {
     menu
 }
 
-/// Рисует видимые ячейки: миниатюру по центру своего места, подпись и рамку выбранной.
+/// Draws visible cells: the thumbnail centered in its slot, the caption and the selection frame.
 fn draw(browser: &Browser, width: f64, dirty: NSRect) {
     let ivars = browser.ivars();
     let view = ivars.view.get();
@@ -520,7 +520,7 @@ fn draw(browser: &Browser, width: f64, dirty: NSRect) {
     paragraph.setLineBreakMode(NSLineBreakMode::ByTruncatingMiddle);
     let text = |size: f64, color: &NSColor| {
         let font = NSFont::systemFontOfSize(size);
-        // SAFETY: ключи - системные константы атрибутов текста, они живут весь процесс.
+        // SAFETY: the keys are system text attribute constants, they live for the whole process.
         let keys = unsafe { [NSFontAttributeName, NSForegroundColorAttributeName, NSParagraphStyleAttributeName] };
         NSDictionary::<NSString, AnyObject>::from_slices(
             &keys,
@@ -596,7 +596,7 @@ fn draw(browser: &Browser, width: f64, dirty: NSRect) {
     }
 }
 
-/// Открывает библиотеку. При первом открытии забирает снимки из папки, при каждом убирает пропавшие.
+/// Opens the library. On first open imports screenshots from the folder, on every open drops missing ones.
 pub fn show(mtm: MainThreadMarker) {
     let settings = Settings::load();
     if !settings.library {
@@ -668,7 +668,7 @@ fn build(mtm: MainThreadMarker) -> Retained<Browser> {
             defer: false,
         ]
     };
-    // Окно держит BROWSER через контроллер, иначе close() освободит его второй раз.
+    // The window holds BROWSER through the controller, otherwise close() would free it a second time.
     unsafe { window.setReleasedWhenClosed(false) };
     window.setTitle(ns_string!("Library"));
     window.setContentMinSize(NSSize::new(420.0, 300.0));
@@ -747,7 +747,7 @@ mod tests {
 
     #[test]
     fn grid_fills_the_width_and_finds_cells_under_the_pointer() {
-        // 3 колонки по 180 и зазоры по 12 помещаются в 600, излишек делится между ними
+        // 3 columns of 180 and gaps of 12 fit into 600, the excess is shared between them
         let medium = grid(View::Medium, 600.0);
         assert_eq!(medium.columns, 3);
         assert!((medium.cell.width - (600.0 - 12.0) / 3.0 + 12.0).abs() < 1e-9);
@@ -755,10 +755,10 @@ mod tests {
         assert_eq!(second_row.origin.x, 12.0 + medium.cell.width + 12.0);
         let center = NSPoint::new(second_row.origin.x + 10.0, second_row.origin.y + 10.0);
         assert_eq!(medium.index_at(center, 10), Some(4));
-        // зазор между ячейками и пустое место после последнего снимка
+        // gap between cells and empty space after the last screenshot
         assert_eq!(medium.index_at(NSPoint::new(5.0, 5.0), 10), None);
         assert_eq!(medium.index_at(center, 4), None);
-        // узкое окно - одна колонка, список - всегда одна
+        // narrow window gives one column, the list is always one
         assert_eq!(grid(View::Large, 200.0).columns, 1);
         assert_eq!(grid(View::List, 900.0), Grid { columns: 1, cell: NSSize::new(900.0, LIST_ROW) });
     }
@@ -767,7 +767,7 @@ mod tests {
     fn only_rows_in_the_visible_band_are_drawn() {
         let list = grid(View::List, 500.0);
         assert_eq!(list.height(3), 3.0 * (LIST_ROW + 12.0) + 12.0);
-        // полоса от 200 до 330 задевает ряды 2 - 5
+        // band from 200 to 330 touches rows 2 - 5
         assert_eq!(list.visible(200.0, 330.0, 1000), 2..6);
         assert_eq!(list.visible(200.0, 330.0, 4), 2..4);
     }

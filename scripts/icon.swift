@@ -1,5 +1,5 @@
-// Рисует иконку приложения: цветной знак из SVG на тёмном скруглённом квадрате.
-// Использование: swift scripts/icon.swift <symbol.svg> <out.iconset>
+// Draws the app icon: the colored mark from an SVG on a dark rounded square.
+// Usage: swift scripts/icon.swift <symbol.svg> <out.iconset>
 import AppKit
 
 let args = CommandLine.arguments
@@ -18,13 +18,13 @@ func render(_ pixels: Int) -> Data {
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
     let size = CGFloat(pixels)
-    // Сетка иконок macOS: тело 824 из 1024, скругление 185.
+    // macOS icon grid: body 824 of 1024, corner radius 185.
     let body = NSRect(x: size * 100 / 1024, y: size * 100 / 1024, width: size * 824 / 1024, height: size * 824 / 1024)
     let radius = size * 185 / 1024
     NSGradient(starting: NSColor(white: 0.24, alpha: 1), ending: NSColor(white: 0.10, alpha: 1))!
         .draw(in: NSBezierPath(roundedRect: body, xRadius: radius, yRadius: radius), angle: -90)
 
-    // У знака в SVG поля по 1/8, так он занимает 60% плитки.
+    // The SVG mark has 1/8 margins, so it fills 60% of the tile.
     symbol.draw(in: body.insetBy(dx: body.width * 0.1, dy: body.height * 0.1))
     NSGraphicsContext.restoreGraphicsState()
     return rep.representation(using: .png, properties: [:])!

@@ -1,9 +1,9 @@
-//! Геометрия прямоугольников, общая для координат CG и Cocoa.
+//! Rectangle geometry shared by CG and Cocoa coordinates.
 
 use objc2_core_foundation::{CGPoint, CGRect};
 
-/// Лежит ли точка внутри прямоугольника. Правая и нижняя границы не включаются,
-/// чтобы точка на стыке двух дисплеев принадлежала только одному из них.
+/// Whether the point is inside the rectangle. The right and bottom edges are excluded
+/// so a point on the seam between two displays belongs to only one of them.
 pub fn contains(rect: CGRect, point: CGPoint) -> bool {
     point.x >= rect.origin.x
         && point.x < rect.origin.x + rect.size.width
@@ -11,7 +11,7 @@ pub fn contains(rect: CGRect, point: CGPoint) -> bool {
         && point.y < rect.origin.y + rect.size.height
 }
 
-/// Центр прямоугольника.
+/// Rectangle center.
 pub fn center(rect: CGRect) -> CGPoint {
     CGPoint::new(rect.origin.x + rect.size.width / 2.0, rect.origin.y + rect.size.height / 2.0)
 }

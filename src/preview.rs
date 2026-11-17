@@ -1,4 +1,4 @@
-//! Превью снимка в углу экрана и подтверждения, когда превью выключено.
+//! Screenshot preview in the screen corner, and confirmations when the preview is off.
 
 use std::cell::{Cell, RefCell};
 use std::path::Path;
@@ -30,22 +30,22 @@ use crate::output::{self, in_background};
 use crate::settings::{Confirmation, PreviewHiding, Settings};
 use crate::{assets, editor, geometry, pin, recognize, settings, upload};
 
-/// Наибольший размер миниатюры в точках.
+/// Largest thumbnail size in points.
 const MAX_SIZE: NSSize = NSSize::new(220.0, 160.0);
 const MARGIN: f64 = 16.0;
 const BUTTON_SIZE: f64 = 28.0;
-/// Отступ кнопок от края миниатюры.
+/// Button inset from the thumbnail edge.
 const INSET: f64 = 6.0;
 const BUTTON_GAP: f64 = 8.0;
 const AUTO_HIDE_SECONDS: f64 = 6.0;
 const POPUP_SECONDS: f64 = 1.5;
-/// На сколько точек нужно сдвинуть мышь, чтобы клик стал перетаскиванием.
+/// How many points the mouse has to move for a click to become a drag.
 const DRAG_THRESHOLD: f64 = 4.0;
 
 thread_local! {
     static CURRENT: RefCell<Option<Preview>> = const { RefCell::new(None) };
     static POPUP: RefCell<Option<Retained<NSPanel>>> = const { RefCell::new(None) };
-    // Закрытые окна живут до конца текущего события, освобождать их посреди обработчика нельзя.
+    // Closed windows live until the end of the current event, they must not be freed mid-handler.
     static RETIRED: RefCell<Vec<Retained<NSPanel>>> = const { RefCell::new(Vec::new()) };
 }
 
@@ -55,22 +55,22 @@ struct Preview {
     monitor: Option<Retained<AnyObject>>,
 }
 
-/// Почему превью закрывается.
+/// Why the preview closes.
 #[derive(Clone, Copy, PartialEq)]
 enum Dismissal {
-    /// Пользователь закрыл сам или уже распорядился снимком.
+    /// The user closed it or already did something with the screenshot.
     Done,
-    /// Превью ушло само: по таймеру, клику мимо или из-за нового снимка.
+    /// The preview went away on its own: on a timer, a click outside or a new screenshot.
     Expired,
 }
 
 struct ThumbnailIvars {
     image: CFRetained<CGImage>,
-    /// Где рисуется снимок. У узкого или низкого снимка вокруг остаются тёмные поля под кнопки.
+    /// Where the screenshot is drawn. A narrow or short screenshot gets dark margins for the buttons.
     image_rect: NSRect,
     scale: f64,
     shot: Shot,
-    /// Снимок уже скопирован, сохранён или перетащен.
+    /// The screenshot was already copied, saved or dragged.
     handled: Cell<bool>,
     auto_hide: bool,
     press: Cell<Option<NSPoint>>,
@@ -85,7 +85,7 @@ define_class!(
     struct ThumbnailView;
 
     impl ThumbnailView {
-        // Панель не активирует Kadro, поэтому первый же клик должен дойти до вида.
+        // The panel does not activate Kadro, so the very first click must reach the view.
         #[unsafe(method(acceptsFirstMouse:))]
         fn accepts_first_mouse(&self, _event: Option<&NSEvent>) -> bool {
             true
@@ -102,7 +102,7 @@ define_class!(
             if let Some(context) = NSGraphicsContext::currentContext().map(|c| c.CGContext()) {
                 CGContext::draw_image(Some(&context), self.ivars().image_rect, Some(&self.ivars().image));
             }
-            // Затемнение под кнопками, иначе на светлом снимке их не видно.
+            // Dimming under the buttons, otherwise they are invisible on a light screenshot.
             if self.ivars().buttons.borrow().first().is_some_and(|b| !b.isHidden()) {
                 NSColor::colorWithWhite_alpha(0.0, 0.45).setFill();
                 shape.fill();
@@ -168,18 +168,18 @@ define_class!(
         fn edit_image(&self, _sender: Option<&AnyObject>) {
             let ivars = self.ivars();
             editor::open(self.mtm(), ivars.image.clone(), ivars.scale, Some(ivars.shot.clone()), "Screenshot");
-            // Снимком дальше распоряжается редактор.
+            // The editor takes care of the screenshot from here.
             ivars.handled.set(true);
             dismiss(Dismissal::Done);
         }
 
-        // Распознанный текст уходит в буфер обмена, а сам снимок остаётся в превью.
+        // Recognized text goes to the clipboard, the screenshot stays in the preview.
         #[unsafe(method(recognizeText:))]
         fn recognize_text(&self, _sender: Option<&AnyObject>) {
             recognize::recognize_and_show(self.ivars().image.clone());
         }
 
-        // Ссылка уходит в буфер обмена, когда загрузка закончится, а снимок считается отправленным.
+        // The link goes to the clipboard when the upload finishes, and the screenshot counts as sent.
         #[unsafe(method(uploadImage:))]
         fn upload_image(&self, _sender: Option<&AnyObject>) {
             let ivars = self.ivars();
@@ -210,7 +210,7 @@ define_class!(
             NSDragOperation::Copy
         }
 
-        // Снимок, который куда-то бросили, считается использованным, и превью больше не нужно.
+        // A screenshot dropped somewhere counts as used, and the preview is no longer needed.
         #[unsafe(method(draggingSession:endedAtPoint:operation:))]
         fn drag_ended(&self, _session: &NSDraggingSession, _point: NSPoint, operation: NSDragOperation) {
             if operation != NSDragOperation::None {
@@ -272,7 +272,7 @@ impl ThumbnailView {
         self.setNeedsDisplay(true);
     }
 
-    /// Через несколько секунд без наведения прячет превью, если включено автоскрытие.
+    /// Hides the preview after a few seconds without hover, if auto hide is on.
     fn schedule_hide(&self) {
         if !self.ivars().auto_hide {
             return;
@@ -289,12 +289,12 @@ impl ThumbnailView {
         }
     }
 
-    /// Перетаскивает снимок как файл. Файл пишется во временную папку в момент начала перетаскивания.
+    /// Drags the screenshot as a file. The file is written to a temporary folder when the drag starts.
     fn start_drag(&self, event: &NSEvent) {
         let ivars = self.ivars();
         let directory = std::env::temp_dir().join("Kadro");
-        // ponytail: кодирование идёт на главном потоке, на снимке 5K это заметная пауза в начале перетаскивания.
-        // Если мешает, писать файл заранее в фоне сразу после показа превью.
+        // ponytail: encoding runs on the main thread, on a 5K screenshot that is a noticeable pause at drag start.
+        // If it gets in the way, write the file in the background right after the preview is shown.
         let path = match output::save(&directory, &ivars.image, ivars.scale, Some(&ivars.shot), None) {
             Ok(path) => path,
             Err(err) => return eprintln!("kadro: failed to prepare dragged file: {err}"),
@@ -311,7 +311,7 @@ impl ThumbnailView {
     }
 }
 
-/// Показывает превью снимка в углу экрана, где он сделан. Прежнее превью уходит.
+/// Shows the screenshot preview in the corner of the screen it was taken on. The previous preview goes away.
 pub fn show(mtm: MainThreadMarker, image: CFRetained<CGImage>, scale: f64, shot: Shot, handled: bool) {
     dismiss(Dismissal::Expired);
     let auto_hide = Settings::load().preview_hiding == PreviewHiding::Auto;
@@ -327,7 +327,7 @@ pub fn show(mtm: MainThreadMarker, image: CFRetained<CGImage>, scale: f64, shot:
     );
     let Some(screen) = screen_for(mtm, &shot) else {
         eprintln!("kadro: no display to show the preview on");
-        // Снимок не пропадает молча, как и при закрытии превью.
+        // The screenshot does not vanish silently, same as when the preview closes.
         if !handled {
             output::copy_in_background(image, scale);
         }
@@ -340,7 +340,7 @@ pub fn show(mtm: MainThreadMarker, image: CFRetained<CGImage>, scale: f64, shot:
     );
 
     let panel = floating_panel(mtm, frame);
-    // Кнопки поверх снимка всегда тёмные, независимо от темы системы.
+    // Buttons over the screenshot are always dark, regardless of the system appearance.
     panel.setAppearance(NSAppearance::appearanceNamed(unsafe { NSAppearanceNameDarkAqua }).as_deref());
     let ivars = ThumbnailIvars {
         image,
@@ -357,7 +357,7 @@ pub fn show(mtm: MainThreadMarker, image: CFRetained<CGImage>, scale: f64, shot:
     panel.setContentView(Some(&view));
     panel.orderFrontRegardless();
 
-    // Клик в другом приложении прячет превью. Клики по самой панели сюда не попадают.
+    // A click in another app hides the preview. Clicks on the panel itself do not get here.
     let monitor = auto_hide
         .then(|| {
             let block = RcBlock::new(|_event: NonNull<NSEvent>| dismiss(Dismissal::Expired));
@@ -379,14 +379,14 @@ fn dismiss(reason: Dismissal) {
     preview.view.cancel_timer();
     preview.panel.orderOut(None);
     let ivars = preview.view.ivars();
-    // Снимок не пропадает молча: если с ним ничего не сделали, он остаётся в буфере обмена.
+    // The screenshot does not vanish silently: if nothing was done with it, it stays on the clipboard.
     if reason == Dismissal::Expired && !ivars.handled.get() {
         output::copy_in_background(ivars.image.clone(), ivars.scale);
     }
     retire(preview.panel);
 }
 
-/// Подтверждает копирование и сохранение, когда превью выключено.
+/// Confirms copying and saving when the preview is off.
 pub fn confirm(mtm: MainThreadMarker, copied: bool, saved: Option<&Path>, shot: &Shot) {
     let text = match (copied, saved.is_some()) {
         (true, true) => "Copied and saved",
@@ -396,20 +396,20 @@ pub fn confirm(mtm: MainThreadMarker, copied: bool, saved: Option<&Path>, shot: 
     };
     match Settings::load().confirmation {
         Confirmation::None => {}
-        // Без бандла у процесса нет идентификатора, и центр уведомлений падает при обращении.
+        // Without a bundle the process has no identifier, and the notification center crashes on access.
         Confirmation::Notification if NSBundle::mainBundle().bundleIdentifier().is_some() => notify(text, saved),
         Confirmation::Notification | Confirmation::Popup => popup(mtm, text, shot),
     }
 }
 
-/// Короткая плашка внизу экрана со снимком.
+/// Short banner at the bottom of the screen with the screenshot.
 fn popup(mtm: MainThreadMarker, text: &str, shot: &Shot) {
     if let Some(screen) = screen_for(mtm, shot) {
         popup_on(mtm, text, &screen);
     }
 }
 
-/// Короткая плашка внизу экрана.
+/// Short banner at the bottom of the screen.
 pub fn popup_on(mtm: MainThreadMarker, text: &str, screen: &NSScreen) {
     hide_popup();
 
@@ -458,7 +458,7 @@ fn hide_popup() {
     }
 }
 
-/// Уведомление macOS. Разрешение запрашивается при первом уведомлении, отказ просто глушит их.
+/// macOS notification. Permission is requested on the first notification, a denial just silences them.
 fn notify(text: &str, saved: Option<&Path>) {
     let center = UNUserNotificationCenter::currentNotificationCenter();
     let content = UNMutableNotificationContent::new();
@@ -477,7 +477,7 @@ fn notify(text: &str, saved: Option<&Path>) {
     center.requestAuthorizationWithOptions_completionHandler(UNAuthorizationOptions::Alert, &granted);
 }
 
-/// Неактивирующая плавающая панель без рамки: не забирает фокус у приложения, которое снимали.
+/// Non-activating borderless floating panel that does not take focus from the captured app.
 fn floating_panel(mtm: MainThreadMarker, frame: NSRect) -> Retained<NSPanel> {
     let panel: Retained<NSPanel> = unsafe {
         msg_send![
@@ -492,9 +492,9 @@ fn floating_panel(mtm: MainThreadMarker, frame: NSRect) -> Retained<NSPanel> {
     panel
 }
 
-/// Плавает над обычными окнами на всех рабочих столах и поверх полноэкранных приложений.
+/// Floats above regular windows on all desktops and over full-screen apps.
 pub fn configure_floating(panel: &NSPanel) {
-    // Иначе orderOut и close освободят панель второй раз, поверх Retained.
+    // Otherwise orderOut and close would free the panel a second time, on top of Retained.
     unsafe { panel.setReleasedWhenClosed(false) };
     panel.setFloatingPanel(true);
     panel.setLevel(NSFloatingWindowLevel);
@@ -508,8 +508,8 @@ pub fn configure_floating(panel: &NSPanel) {
     );
 }
 
-/// Экран, где сделан снимок, по центру его области. Если такого уже нет - главный.
-/// `None`, только если к Mac не подключён ни один дисплей.
+/// Screen where the screenshot was taken, by the center of its area. If it is gone, the main one.
+/// `None` only if no display is connected to the Mac.
 pub fn screen_for(mtm: MainThreadMarker, shot: &Shot) -> Option<Retained<NSScreen>> {
     let center = geometry::center(to_cocoa(mtm, shot.global_rect));
     let screens = NSScreen::screens(mtm);
@@ -520,14 +520,14 @@ pub fn screen_for(mtm: MainThreadMarker, shot: &Shot) -> Option<Retained<NSScree
         .or_else(|| NSScreen::mainScreen(mtm))
 }
 
-/// Переводит прямоугольник из глобальных координат CG в координаты окон Cocoa.
-/// У CG ось y идёт вниз от верха главного экрана, у Cocoa - вверх от его низа.
+/// Converts a rectangle from global CG coordinates to Cocoa window coordinates.
+/// In CG the y axis goes down from the top of the main screen, in Cocoa up from its bottom.
 pub fn to_cocoa(mtm: MainThreadMarker, global: NSRect) -> NSRect {
     let primary_height = NSScreen::screens(mtm).firstObject().map_or(0.0, |s| s.frame().size.height);
     NSRect::new(NSPoint::new(global.origin.x, primary_height - global.origin.y - global.size.height), global.size)
 }
 
-/// Кнопки нижнего ряда превью слева направо.
+/// Bottom row preview buttons from left to right.
 fn button_row() -> Vec<(&'static [u8], Sel)> {
     let mut row = vec![
         (assets::SQUARE_PEN, sel!(editImage:)),
@@ -547,18 +547,18 @@ fn row_width(buttons: usize) -> f64 {
     buttons as f64 * (BUTTON_SIZE + BUTTON_GAP) - BUTTON_GAP
 }
 
-/// Размер превью - миниатюра, но не меньше, чем нужно кнопкам. Сверху крестик, снизу ряд.
+/// Preview size is the thumbnail, but not smaller than the buttons need. Close button on top, the row below.
 fn frame_size(image: NSSize, buttons: usize) -> NSSize {
     NSSize::new(image.width.max(row_width(buttons) + 2.0 * INSET), image.height.max(2.0 * BUTTON_SIZE + 3.0 * INSET))
 }
 
-/// Вписывает размер снимка в предел, сохраняя пропорции. Маленькие снимки не растягиваются.
+/// Fits the screenshot size into the limit, keeping proportions. Small screenshots are not stretched.
 fn fit(size: NSSize, limit: NSSize) -> NSSize {
     let ratio = (limit.width / size.width).min(limit.height / size.height).min(1.0);
     NSSize::new((size.width * ratio).round().max(1.0), (size.height * ratio).round().max(1.0))
 }
 
-/// Держит закрытую панель до конца текущего события и освобождает её следующим шагом главной очереди.
+/// Holds the closed panel until the end of the current event and frees it on the next main queue step.
 pub fn retire(panel: Retained<NSPanel>) {
     RETIRED.with_borrow_mut(|retired| retired.push(panel));
     DispatchQueue::main().exec_async(|| drop(RETIRED.take()));
@@ -570,19 +570,19 @@ mod tests {
 
     #[test]
     fn thumbnail_keeps_aspect_and_never_upscales() {
-        // широкий снимок упирается в ширину
+        // a wide screenshot hits the width
         assert_eq!(fit(NSSize::new(2580.0, 1080.0), MAX_SIZE), NSSize::new(220.0, 92.0));
-        // высокий упирается в высоту
+        // a tall one hits the height
         assert_eq!(fit(NSSize::new(400.0, 1200.0), MAX_SIZE), NSSize::new(53.0, 160.0));
-        // маленький остаётся как есть
+        // a small one stays as is
         assert_eq!(fit(NSSize::new(100.0, 60.0), MAX_SIZE), NSSize::new(100.0, 60.0));
     }
 
     #[test]
     fn frame_fits_buttons_around_small_thumbnail() {
-        // узкий и низкий снимок раздвигается под ряд из 6 кнопок и крестик
+        // a narrow and short screenshot widens for a row of 6 buttons and the close button
         assert_eq!(frame_size(NSSize::new(53.0, 40.0), 6), NSSize::new(220.0, 74.0));
-        // крупный остаётся размером миниатюры
+        // a large one keeps the thumbnail size
         assert_eq!(frame_size(NSSize::new(220.0, 92.0), 6), NSSize::new(220.0, 92.0));
     }
 }

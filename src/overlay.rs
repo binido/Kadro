@@ -1,4 +1,4 @@
-//! Оверлей поверх всех экранов: выделение области с лупой или выбор окна мышью.
+//! Overlay over all screens: area selection with a magnifier or picking a window with the mouse.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -24,7 +24,7 @@ use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSObject, NSPoint, NSRec
 use crate::bridge::{self, number};
 use crate::{assets, capture, geometry, keys, output, scroll};
 
-/// Сторона лупы в точках и сколько пикселей снимка в ней видно по каждой оси.
+/// Magnifier side in points and how many screenshot pixels it shows on each axis.
 const LOUPE_SIZE: f64 = 120.0;
 const LOUPE_PIXELS: f64 = 15.0;
 
@@ -34,7 +34,7 @@ pub enum Mode {
     Window,
 }
 
-/// Окно другого приложения в глобальных координатах CG - от левого верхнего угла главного дисплея.
+/// Window of another app in global CG coordinates, from the top left of the main display.
 #[derive(Clone, Copy)]
 pub struct TargetWindow {
     pub id: CGWindowID,
@@ -46,12 +46,12 @@ thread_local! {
     static WINDOWS: RefCell<Vec<Retained<OverlayWindow>>> = const { RefCell::new(Vec::new()) };
     static VIEWS: RefCell<Vec<Retained<SelectionView>>> = const { RefCell::new(Vec::new()) };
     static MODE: Cell<Mode> = const { Cell::new(Mode::Region) };
-    // Окна на экране от переднего к заднему, снятые в момент открытия оверлея.
+    // On-screen windows front to back, taken when the overlay opens.
     static TARGETS: RefCell<Vec<TargetWindow>> = const { RefCell::new(Vec::new()) };
     static HOVERED: Cell<Option<TargetWindow>> = const { Cell::new(None) };
-    // Приложение, которое было активным до оверлея. Сам оверлей делает активным Kadro.
+    // App that was active before the overlay. The overlay itself makes Kadro active.
     static APP: RefCell<String> = const { RefCell::new(String::new()) };
-    // Снимки дисплеев на момент открытия оверлея, из них рисуется лупа.
+    // Display images taken when the overlay opens, the magnifier is drawn from them.
     static FROZEN: RefCell<HashMap<CGDirectDisplayID, CFRetained<CGImage>>> = RefCell::new(HashMap::new());
 }
 
@@ -61,7 +61,7 @@ define_class!(
     struct OverlayWindow;
 
     impl OverlayWindow {
-        // Окно без рамки по умолчанию не получает клавиатуру, а без неё не работает Esc.
+        // A borderless window gets no keyboard by default, and Esc does not work without it.
         #[unsafe(method(canBecomeKeyWindow))]
         fn can_become_key_window(&self) -> bool {
             true
@@ -73,9 +73,9 @@ define_class!(
 struct ViewIvars {
     display: Cell<CGDirectDisplayID>,
     start: Cell<Option<NSPoint>>,
-    /// Позиция мыши без сдвига стрелками.
+    /// Mouse position without the arrow key offset.
     pointer: Cell<Option<NSPoint>>,
-    /// Сдвиг конца выделения стрелками, обнуляется с новым нажатием мыши.
+    /// Arrow key offset of the selection end, reset on a new mouse down.
     nudge: Cell<NSPoint>,
     selection: Cell<Option<NSRect>>,
 }
@@ -120,7 +120,7 @@ define_class!(
                         NSRectFill(rect);
                         NSColor::selectedContentBackgroundColor().setStroke();
                         NSBezierPath::strokeRect(rect);
-                        // Окна выше выбранного в снимок не попадут, поэтому подсветка их не закрашивает.
+                        // Windows above the selected one will not be in the screenshot, so the highlight does not cover them.
                         TARGETS.with_borrow(|targets| {
                             for above in targets.iter().take_while(|t| t.id != target.id) {
                                 NSRectFillUsingOperation(self.local_rect(above.frame), NSCompositingOperation::Clear);
@@ -131,7 +131,7 @@ define_class!(
             }
         }
 
-        // Движение мыши приходит только ключевому окну, поэтому позиция раздаётся всем экранам сразу.
+        // Mouse moves reach only the key window, so the position is sent to all screens at once.
         #[unsafe(method(mouseMoved:))]
         fn mouse_moved(&self, _event: &NSEvent) {
             match MODE.get() {
@@ -166,7 +166,7 @@ define_class!(
             self.update_selection();
         }
 
-        // Shift нажат или отпущен посреди протягивания - выделение сразу становится квадратом или обратно.
+        // Shift pressed or released mid-drag turns the selection into a square or back right away.
         #[unsafe(method(flagsChanged:))]
         fn flags_changed(&self, _event: &NSEvent) {
             self.update_selection();
@@ -179,10 +179,10 @@ define_class!(
             }
             self.ivars().start.set(None);
             match self.ivars().selection.get() {
-                // Клик без протягивания - не выделение, оверлей остаётся открытым.
+                // A click without dragging is not a selection, the overlay stays open.
                 Some(rect) if rect.size.width >= 2.0 && rect.size.height >= 2.0 => {
                     let height = self.bounds().size.height;
-                    // У NSView начало координат внизу, у ScreenCaptureKit - вверху.
+                    // NSView has the origin at the bottom, ScreenCaptureKit at the top.
                     let flipped = CGRect::new(
                         CGPoint::new(rect.origin.x, height - rect.origin.y - rect.size.height),
                         rect.size,
@@ -216,7 +216,7 @@ define_class!(
                 keys::UP => NSPoint::new(0.0, step),
                 _ => return,
             };
-            // Стрелки двигают угол, который тянет мышь, поэтому работают только во время протягивания.
+            // Arrows move the corner the mouse is dragging, so they work only while dragging.
             if self.ivars().start.get().is_some() {
                 let nudge = self.ivars().nudge.get();
                 self.ivars().nudge.set(NSPoint::new(nudge.x + delta.x, nudge.y + delta.y));
@@ -234,7 +234,7 @@ impl SelectionView {
         unsafe { msg_send![super(this), initWithFrame: frame] }
     }
 
-    /// Позиция события в координатах вида, прижатая к его границам.
+    /// Event position in view coordinates, clamped to its bounds.
     fn point(&self, event: &NSEvent) -> NSPoint {
         self.clamp(self.convertPoint_fromView(event.locationInWindow(), None))
     }
@@ -244,7 +244,7 @@ impl SelectionView {
         NSPoint::new(p.x.clamp(0.0, size.width), p.y.clamp(0.0, size.height))
     }
 
-    /// Конец выделения: мышь плюс сдвиг стрелками.
+    /// Selection end: the mouse plus the arrow key offset.
     fn end_point(&self) -> Option<NSPoint> {
         let pointer = self.ivars().pointer.get()?;
         let nudge = self.ivars().nudge.get();
@@ -255,7 +255,7 @@ impl SelectionView {
         let (Some(start), Some(end)) = (self.ivars().start.get(), self.end_point()) else { return };
         let square = NSEvent::modifierFlags_class().contains(NSEventModifierFlags::Shift);
         let rect = selection_rect(start, end, square);
-        // Квадрат может выйти за край экрана, тогда он обрезается краем.
+        // The square may go past the screen edge, then the edge clips it.
         self.ivars().selection.set(Some(clip(rect, self.bounds())));
         self.setNeedsDisplay(true);
     }
@@ -264,7 +264,7 @@ impl SelectionView {
         self.window().map_or(1.0, |w| w.backingScaleFactor())
     }
 
-    /// Размер выделения в пикселях снимка, под выделением или над ним, если внизу нет места.
+    /// Selection size in screenshot pixels, below the selection or above it if there is no room below.
     fn draw_size(&self, selection: NSRect) {
         let scale = self.scale();
         let text = NSString::from_str(&format!(
@@ -295,20 +295,20 @@ impl SelectionView {
         };
     }
 
-    /// Лупа рядом с курсором: пиксели снимка под ним крупно, центральный пиксель в рамке.
+    /// Magnifier next to the cursor: screenshot pixels under it enlarged, the center pixel framed.
     fn draw_loupe(&self, at: NSPoint) {
         let Some(image) = FROZEN.with_borrow(|frozen| frozen.get(&self.ivars().display.get()).cloned()) else {
             return;
         };
         let bounds = self.bounds();
         let scale = CGImage::width(Some(&image)) as f64 / bounds.size.width;
-        // Пиксель под курсором в координатах снимка, у которого начало вверху.
+        // Pixel under the cursor in screenshot coordinates, origin at the top.
         let pixel = NSPoint::new((at.x * scale).floor(), ((bounds.size.height - at.y) * scale).floor());
         let half = (LOUPE_PIXELS / 2.0).floor();
         let source = CGRect::new(CGPoint::new(pixel.x - half, pixel.y - half), CGSize::new(LOUPE_PIXELS, LOUPE_PIXELS));
         let Some(crop) = CGImage::with_image_in_rect(Some(&image), source) else { return };
 
-        // Справа сверху от курсора, а у края экрана - с другой стороны.
+        // Up and to the right of the cursor, on the other side near the screen edge.
         let offset = 24.0;
         let mut origin = NSPoint::new(at.x + offset, at.y + offset);
         if origin.x + LOUPE_SIZE > bounds.size.width {
@@ -325,9 +325,9 @@ impl SelectionView {
         NSColor::blackColor().setFill();
         NSRectFill(frame);
         if let Some(context) = NSGraphicsContext::currentContext().map(|c| c.CGContext()) {
-            // Без сглаживания, иначе отдельных пикселей не видно.
+            // No smoothing, otherwise individual pixels are not visible.
             CGContext::set_interpolation_quality(Some(&context), CGInterpolationQuality::None);
-            // У края снимка вырезка меньше LOUPE_PIXELS, и её место в лупе сдвигается вместе с краем.
+            // At the screenshot edge the cutout is smaller than LOUPE_PIXELS, and its place in the magnifier shifts with the edge.
             let cell = LOUPE_SIZE / LOUPE_PIXELS;
             let cut = CGRect::new(
                 CGPoint::new(source.origin.x.max(0.0), source.origin.y.max(0.0)),
@@ -354,7 +354,7 @@ impl SelectionView {
         clip.stroke();
     }
 
-    /// Переводит прямоугольник из глобальных координат CG в координаты вида.
+    /// Converts a rectangle from global CG coordinates to view coordinates.
     fn local_rect(&self, global: CGRect) -> NSRect {
         to_display_local(global, CGDisplayBounds(self.ivars().display.get()))
     }
@@ -375,7 +375,7 @@ fn clip(rect: NSRect, bounds: NSRect) -> NSRect {
     NSRect::new(NSPoint::new(x, y), NSSize::new((right - x).max(0.0), (top - y).max(0.0)))
 }
 
-/// Выделение от точки нажатия до конца. Квадрат растёт в сторону конца по большей стороне.
+/// Selection from the mouse down point to the end. The square grows toward the end along the longer side.
 fn selection_rect(start: NSPoint, end: NSPoint, square: bool) -> NSRect {
     let (mut dx, mut dy) = (end.x - start.x, end.y - start.y);
     if square {
@@ -386,16 +386,16 @@ fn selection_rect(start: NSPoint, end: NSPoint, square: bool) -> NSRect {
     NSRect::new(NSPoint::new(start.x.min(start.x + dx), start.y.min(start.y + dy)), NSSize::new(dx.abs(), dy.abs()))
 }
 
-/// Переводит прямоугольник из глобальных координат CG (начало вверху слева главного дисплея)
-/// в координаты вида на дисплее `display` (начало внизу слева этого дисплея).
+/// Converts a rectangle from global CG coordinates (origin at the top left of the main display)
+/// to view coordinates on `display` (origin at the bottom left of that display).
 fn to_display_local(global: CGRect, display: CGRect) -> NSRect {
     let x = global.origin.x - display.origin.x;
     let top = global.origin.y - display.origin.y;
     NSRect::new(NSPoint::new(x, display.size.height - top - global.size.height), global.size)
 }
 
-/// Показывает оверлей на всех экранах: выделение области или выбор окна.
-/// false - оверлей не показан: нет доступа или он уже открыт.
+/// Shows the overlay on all screens: area selection or window picking.
+/// false means the overlay was not shown, because of missing permission or it is already open.
 pub fn select(mtm: MainThreadMarker, mode: Mode) -> bool {
     if !capture::has_access(mtm) || WINDOWS.with_borrow(|w| !w.is_empty()) {
         return false;
@@ -430,12 +430,12 @@ pub fn select(mtm: MainThreadMarker, mode: Mode) -> bool {
     true
 }
 
-/// Отдаёт позицию мыши виду того экрана, где она сейчас, остальным - пустую.
+/// Gives the mouse position to the view of the screen it is on, and an empty one to the rest.
 fn track_pointer() {
     let mouse = NSEvent::mouseLocation();
     VIEWS.with_borrow(|views| {
         for view in views {
-            // Во время протягивания позицию ведёт сам вид через mouseDragged.
+            // While dragging the view tracks the position itself through mouseDragged.
             if view.ivars().start.get().is_some() {
                 continue;
             }
@@ -452,7 +452,7 @@ fn track_pointer() {
     });
 }
 
-/// Принимает снимок дисплея для лупы. Если оверлей уже закрыт, снимок не нужен.
+/// Receives a display image for the magnifier. If the overlay is already closed, the image is not needed.
 pub fn show_frozen(display: CGDirectDisplayID, image: CFRetained<CGImage>) {
     if WINDOWS.with_borrow(Vec::is_empty) {
         return;
@@ -463,7 +463,7 @@ pub fn show_frozen(display: CGDirectDisplayID, image: CFRetained<CGImage>) {
 
 fn overlay_window(mtm: MainThreadMarker, screen: &NSScreen) -> (Retained<OverlayWindow>, Retained<SelectionView>) {
     let frame = screen.frame();
-    // ponytail: выделение в пределах одного дисплея, протягивание через границу экранов не склеивает снимки.
+    // ponytail: selection stays within one display, dragging across screens does not stitch images.
     let window: Retained<OverlayWindow> = unsafe {
         msg_send![
             OverlayWindow::alloc(mtm),
@@ -473,7 +473,7 @@ fn overlay_window(mtm: MainThreadMarker, screen: &NSScreen) -> (Retained<Overlay
             defer: false,
         ]
     };
-    // Иначе close() освободит окно второй раз, поверх Retained.
+    // Otherwise close() would free the window a second time, on top of Retained.
     unsafe { window.setReleasedWhenClosed(false) };
     window.setLevel(NSScreenSaverWindowLevel);
     window.setOpaque(false);
@@ -499,30 +499,30 @@ fn display_id(screen: &NSScreen) -> CGDirectDisplayID {
         .map_or(0, |n| n.unsignedIntValue())
 }
 
-/// Собирает обычные окна других приложений, от переднего к заднему.
+/// Collects regular windows of other apps, front to back.
 pub fn on_screen_windows() -> Vec<TargetWindow> {
     let options = CGWindowListOption::OptionOnScreenOnly | CGWindowListOption::ExcludeDesktopElements;
     let Some(list) = CGWindowListCopyWindowInfo(options, kCGNullWindowID) else {
         return Vec::new();
     };
-    // SAFETY: CFArray и NSArray взаимозаменяемы, а элементы списка окон - словари с их описанием.
+    // SAFETY: CFArray and NSArray are toll-free bridged, and the window list elements are dictionaries describing them.
     let list: &NSArray<NSDictionary<NSString, AnyObject>> = unsafe { bridge::toll_free(&*list) };
     let own_pid = capture::own_pid();
 
     list.iter()
         .filter_map(|info| {
             let pid = number(&info, ns_string!("kCGWindowOwnerPID"))?.intValue();
-            // Слой 0 - обычные окна, выше лежат строка меню, Dock и всплывающие панели.
+            // Layer 0 is regular windows, the menu bar, Dock and popups sit above.
             if number(&info, ns_string!("kCGWindowLayer"))?.integerValue() != 0
                 || pid == own_pid
-                // Браузеры держат над вкладками полностью прозрачные окна, курсор не должен на них цепляться.
+                // Browsers keep fully transparent windows over tabs, the cursor must not catch on them.
                 || number(&info, ns_string!("kCGWindowAlpha"))?.doubleValue() == 0.0
             {
                 return None;
             }
             let bounds = info.objectForKey(ns_string!("kCGWindowBounds"))?;
             let mut frame = CGRect::default();
-            // SAFETY: kCGWindowBounds - словарь с x, y, Width и Height, а NSDictionary и CFDictionary взаимозаменяемы.
+            // SAFETY: kCGWindowBounds is a dictionary with x, y, Width and Height, and NSDictionary and CFDictionary are toll-free bridged.
             let bounds: &CFDictionary = unsafe { bridge::toll_free(&*bounds) };
             unsafe { CGRectMakeWithDictionaryRepresentation(Some(bounds), &raw mut frame) }.then_some(())?;
             let id = number(&info, ns_string!("kCGWindowNumber"))?.unsignedIntValue();
@@ -562,7 +562,7 @@ fn close() {
     TARGETS.take();
     HOVERED.set(None);
     FROZEN.take();
-    // Окна освобождаются после выхода из обработчика события, а не посреди него.
+    // Windows are freed after the event handler returns, not in the middle of it.
     DispatchQueue::main().exec_async(|| {
         drop(VIEWS.take());
         drop(WINDOWS.take());
@@ -585,7 +585,7 @@ mod tests {
     #[test]
     fn selection_follows_drag_and_squares_toward_the_pointer() {
         let start = NSPoint::new(100.0, 100.0);
-        // протягивание вправо-вверх
+        // dragging right and up
         assert_eq!(
             selection_rect(start, NSPoint::new(130.0, 115.0), false),
             NSRect::new(start, NSSize::new(30.0, 15.0))
@@ -594,7 +594,7 @@ mod tests {
             selection_rect(start, NSPoint::new(130.0, 115.0), true),
             NSRect::new(start, NSSize::new(30.0, 30.0))
         );
-        // протягивание влево-вниз
+        // dragging left and down
         assert_eq!(
             selection_rect(start, NSPoint::new(90.0, 60.0), true),
             NSRect::new(NSPoint::new(60.0, 60.0), NSSize::new(40.0, 40.0))

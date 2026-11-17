@@ -1,9 +1,9 @@
-//! Аннотации поверх снимка: что нарисовано, где и каким стилем.
+//! Annotations over a screenshot: what is drawn, where and in which style.
 //!
-//! Координаты хранятся в пикселях основы документа с началом вверху слева. Поэтому обрезка
-//! и изменение размера не сдвигают аннотации, а только меняют, какая их часть видна.
+//! Coordinates are in pixels of the document base with the origin at the top left. So cropping
+//! and resizing do not move annotations, they only change which part of them is visible.
 
-/// Точка в пикселях основы, начало вверху слева.
+/// Point in base pixels, origin at the top left.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Point {
     pub x: f64,
@@ -35,7 +35,7 @@ pub enum Tool {
     Spotlight,
     Magnifier,
     Ruler,
-    /// Снимок, добавленный поверх основы.
+    /// Screenshot added on top of the base.
     Image,
 }
 
@@ -61,12 +61,12 @@ impl Tool {
         Tool::ALL.iter().position(|t| *t == self).unwrap_or(0)
     }
 
-    /// Инструменты, которые задаются двумя углами или концами.
+    /// Tools defined by two corners or two ends.
     pub fn is_two_point(self) -> bool {
         !matches!(self, Tool::Pen | Tool::Highlighter | Tool::Text | Tool::Counter)
     }
 
-    /// Варианты стиля для выпадающего списка. Номер варианта хранится в `Annotation::style`.
+    /// Style variants for the popup menu. The variant index is stored in `Annotation::style`.
     pub fn styles(self) -> &'static [&'static str] {
         match self {
             Tool::Arrow => &["Filled head", "Open head", "Both ends"],
@@ -83,8 +83,8 @@ impl Tool {
     }
 }
 
-/// Размер штриха, текста и счётчика. Точки умножаются на масштаб снимка, чтобы на Retina
-/// и на обычном экране аннотации выглядели одинаково.
+/// Size of strokes, text and counters. Points are multiplied by the screenshot scale so annotations
+/// look the same on Retina and regular displays.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Size {
     Small,
@@ -105,7 +105,7 @@ impl Size {
         }
     }
 
-    /// Толщина штриха в точках.
+    /// Stroke width in points.
     pub fn stroke(self) -> f64 {
         match self {
             Size::Small => 2.0,
@@ -115,7 +115,7 @@ impl Size {
         }
     }
 
-    /// Кегль текста в точках.
+    /// Text size in points.
     pub fn text(self) -> f64 {
         match self {
             Size::Small => 14.0,
@@ -125,7 +125,7 @@ impl Size {
         }
     }
 
-    /// Диаметр счётчика в точках.
+    /// Counter diameter in points.
     pub fn counter(self) -> f64 {
         match self {
             Size::Small => 22.0,
@@ -136,7 +136,7 @@ impl Size {
     }
 }
 
-/// Цвет в sRGB, компоненты от 0 до 1.
+/// sRGB color, components from 0 to 1.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Color {
     pub red: f64,
@@ -152,20 +152,20 @@ impl Color {
 #[derive(Clone, PartialEq, Debug)]
 pub struct Annotation {
     pub tool: Tool,
-    /// Два конца или угла, точки штриха или одна точка привязки текста и счётчика.
+    /// Two ends or corners, stroke points, or a single anchor point for text and counters.
     pub points: Vec<Point>,
     pub color: Color,
     pub size: Size,
     pub style: usize,
     pub text: String,
-    /// Ширина и высота текста или диаметр счётчика в пикселях. Их считает отрисовка,
-    /// а здесь они нужны, чтобы попадать по тексту и счётчику мышью.
+    /// Width and height of the text or counter diameter in pixels. Rendering computes them,
+    /// they are kept here for mouse hit testing on text and counters.
     pub extent: (f64, f64),
-    /// Номер картинки в списке картинок редактора, для добавленного снимка.
+    /// Index in the editor image list, for an added screenshot.
     pub image: usize,
 }
 
-/// За что взялись мышью: за всю аннотацию или за одну её точку.
+/// What the mouse grabbed: the whole annotation or one of its points.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Grip {
     Body,
@@ -178,7 +178,7 @@ impl Annotation {
         Annotation { tool, points, color, size, style, text: String::new(), extent: (0.0, 0.0), image: 0 }
     }
 
-    /// Прямоугольник по двум углам. Для остальных инструментов - охват всех точек.
+    /// Rectangle from two corners. For other tools, the bounds of all points.
     pub fn rect(&self) -> (Point, Point) {
         let xs = self.points.iter().map(|p| p.x);
         let ys = self.points.iter().map(|p| p.y);
@@ -187,7 +187,7 @@ impl Annotation {
         (min, max)
     }
 
-    /// Слишком маленькая фигура - это случайный клик, а не рисунок.
+    /// A shape this small is an accidental click, not a drawing.
     pub fn is_degenerate(&self) -> bool {
         match self.tool {
             Tool::Text | Tool::Counter => false,
@@ -196,8 +196,8 @@ impl Annotation {
         }
     }
 
-    /// Куда попала точка, с допуском `tolerance` пикселей. Концы и углы проверяются раньше тела,
-    /// чтобы за них можно было тянуть.
+    /// What the point hits, within `tolerance` pixels. Ends and corners are checked before the body
+    /// so they can be dragged.
     pub fn hit(&self, p: Point, tolerance: f64) -> Option<Grip> {
         if self.tool.is_two_point()
             && let Some(index) = self.points.iter().position(|q| q.distance(p) <= tolerance)
@@ -229,7 +229,7 @@ impl Annotation {
         inside.then_some(Grip::Body)
     }
 
-    /// Занятое место текста (от левого верхнего угла) или счётчика (вокруг центра).
+    /// Area taken by text (from the top left corner) or a counter (around its center).
     pub fn extent_rect(&self) -> (Point, Point) {
         let p = self.points[0];
         let (width, height) = self.extent;
@@ -241,7 +241,7 @@ impl Annotation {
         }
     }
 
-    /// Занятый прямоугольник: охват точек или место текста и счётчика.
+    /// Occupied rectangle: bounds of the points or the area of text and counters.
     pub fn bounds(&self) -> (Point, Point) {
         match self.tool {
             Tool::Text | Tool::Counter => self.extent_rect(),
@@ -249,13 +249,13 @@ impl Annotation {
         }
     }
 
-    /// Сдвигает всю аннотацию.
+    /// Moves the whole annotation.
     pub fn moved(&self, dx: f64, dy: f64) -> Self {
         let points = self.points.iter().map(|p| Point::new(p.x + dx, p.y + dy)).collect();
         Annotation { points, ..self.clone() }
     }
 
-    /// Переносит одну точку - конец линии или угол прямоугольника.
+    /// Moves one point, a line end or a rectangle corner.
     pub fn with_point(&self, index: usize, p: Point) -> Self {
         let mut points = self.points.clone();
         if let Some(point) = points.get_mut(index) {
@@ -265,12 +265,12 @@ impl Annotation {
     }
 }
 
-/// Верхняя аннотация под точкой: последние нарисованные лежат сверху.
+/// Topmost annotation under the point. The most recently drawn ones are on top.
 pub fn hit_test(annotations: &[Annotation], p: Point, tolerance: f64) -> Option<(usize, Grip)> {
     annotations.iter().enumerate().rev().find_map(|(index, a)| a.hit(p, tolerance).map(|grip| (index, grip)))
 }
 
-/// Найденное прилипание: поправка сдвига и линии, к которым прилипло, - вертикальная x и горизонтальная y.
+/// Snap result: offset correction and the lines it snapped to, vertical x and horizontal y.
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub struct Snap {
     pub dx: f64,
@@ -279,8 +279,8 @@ pub struct Snap {
     pub y: Option<f64>,
 }
 
-/// Подтягивает края или центр прямоугольника `moving` к ближайшим краям или центрам `targets`,
-/// если они ближе `tolerance`. Каждая ось прилипает отдельно.
+/// Pulls the edges or center of `moving` to the nearest edges or centers of `targets`
+/// when they are closer than `tolerance`. Each axis snaps on its own.
 pub fn snap(moving: (Point, Point), targets: &[(Point, Point)], tolerance: f64) -> Snap {
     let lines = |min: f64, max: f64| [min, (min + max) / 2.0, max];
     let axis = |own: [f64; 3], others: &mut dyn Iterator<Item = [f64; 3]>| {
@@ -296,7 +296,7 @@ pub fn snap(moving: (Point, Point), targets: &[(Point, Point)], tolerance: f64) 
     Snap { dx: x.map_or(0.0, |s| s.0), dy: y.map_or(0.0, |s| s.0), x: x.map(|s| s.1), y: y.map(|s| s.1) }
 }
 
-/// Номер счётчика - его место среди счётчиков. Удаление одного перенумеровывает остальные.
+/// Counter number is its position among counters. Deleting one renumbers the rest.
 pub fn counter_number(annotations: &[Annotation], index: usize) -> usize {
     annotations[..=index].iter().filter(|a| a.tool == Tool::Counter).count()
 }
@@ -326,7 +326,7 @@ mod tests {
         let a = line((0.0, 0.0), (100.0, 0.0));
         assert_eq!(a.hit(Point::new(50.0, 3.0), 5.0), Some(Grip::Body));
         assert_eq!(a.hit(Point::new(50.0, 9.0), 5.0), None);
-        // за пределами отрезка
+        // outside the segment
         assert_eq!(a.hit(Point::new(110.0, 0.0), 5.0), None);
         assert_eq!(a.hit(Point::new(99.0, 1.0), 5.0), Some(Grip::Point(1)));
     }
@@ -360,12 +360,12 @@ mod tests {
     #[test]
     fn moved_box_snaps_to_the_nearest_edge_or_centre_on_each_axis() {
         let target = (Point::new(100.0, 100.0), Point::new(200.0, 160.0));
-        // левый край 203 прилипает к правому краю цели 200, верхний край 127 - к её центру 130
+        // left edge 203 snaps to the target right edge 200, top edge 127 to its center 130
         let moving = (Point::new(203.0, 127.0), Point::new(243.0, 147.0));
         let snapped = snap(moving, &[target], 5.0);
         assert_eq!((snapped.dx, snapped.x), (-3.0, Some(200.0)));
         assert_eq!((snapped.dy, snapped.y), (3.0, Some(130.0)));
-        // дальше допуска - без поправки
+        // beyond tolerance, no correction
         let far = (Point::new(500.0, 500.0), Point::new(520.0, 520.0));
         assert_eq!(snap(far, &[target], 5.0), Snap::default());
     }

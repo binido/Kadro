@@ -1,7 +1,7 @@
 #!/bin/sh
-# Собирает build/Kadro.app из релизной сборки.
-# Подпись - KADRO_SIGN_IDENTITY, по умолчанию ad-hoc. У ad-hoc подписи macOS
-# сбрасывает доступ к записи экрана после каждой пересборки.
+# Builds build/Kadro.app from a release build.
+# Signing uses KADRO_SIGN_IDENTITY, ad hoc by default. With an ad hoc signature macOS
+# resets Screen Recording permission after every rebuild.
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -45,7 +45,7 @@ cat > "$app/Contents/Info.plist" <<EOF
         <dict>
             <key>CFBundleTypeName</key><string>Image</string>
             <key>CFBundleTypeRole</key><string>Editor</string>
-            <!-- Alternate: Kadro появляется в "Открыть с помощью", но не перехватывает картинки у Просмотра. -->
+            <!-- Alternate: Kadro shows up in "Open With" but does not take images over from Preview. -->
             <key>LSHandlerRank</key><string>Alternate</string>
             <key>LSItemContentTypes</key>
             <array>

@@ -1,8 +1,8 @@
-//! Редактор: холст с масштабом, обрезка, изменение размера, аннотации, отмена и вывод снимка.
+//! Editor: zoomable canvas, crop, resize, annotations, undo and screenshot output.
 //!
-//! Правки хранит [`document::History`], а холст каждый раз показывает картинку, заново
-//! нарисованную из основы и документа. Аннотацию, которую тянут мышью, рисует поверх
-//! слой `Marks`, чтобы не перерисовывать весь снимок на каждое движение. Окно живёт в `EDITORS` до закрытия.
+//! Edits live in [`document::History`], and the canvas always shows an image redrawn
+//! from the base and the document. The annotation being dragged is drawn on top by
+//! the `Marks` layer so the whole screenshot is not redrawn on every move. The window lives in `EDITORS` until closed.
 
 use std::cell::{Cell, OnceCell, RefCell};
 use std::path::Path;
@@ -44,12 +44,12 @@ use crate::{assets, keys, measure, output, overlay, pin, preview, recognize, upl
 const ZOOM_STEP: f64 = 1.25;
 const MIN_ZOOM: f64 = 0.05;
 const MAX_ZOOM: f64 = 32.0;
-/// Окно при открытии занимает не больше этой доли экрана.
+/// On open the window takes at most this share of the screen.
 const MAX_SCREEN_SHARE: f64 = 0.85;
 const MIN_WINDOW: NSSize = NSSize::new(640.0, 540.0);
 const PALETTE_WIDTH: f64 = 44.0;
 const PALETTE_BUTTON: f64 = 28.0;
-/// На сколько экранных точек можно промахнуться мимо аннотации.
+/// How many screen points the mouse can miss an annotation by.
 const HIT_TOLERANCE: f64 = 6.0;
 
 unsafe extern "C" {
@@ -58,13 +58,13 @@ unsafe extern "C" {
 
 thread_local! {
     static EDITORS: RefCell<Vec<Retained<Editor>>> = const { RefCell::new(Vec::new()) };
-    // Закрытые редакторы живут до конца обработчика закрытия, освобождать их посреди него нельзя.
+    // Closed editors live until the end of the close handler, they must not be freed in the middle of it.
     static RETIRED: RefCell<Vec<Retained<Editor>>> = const { RefCell::new(Vec::new()) };
-    /// Редактор, который ждёт снимок области для вставки.
+    /// Editor waiting for an area screenshot to paste.
     static ADD_TARGET: RefCell<Option<Weak<Editor>>> = const { RefCell::new(None) };
 }
 
-/// Кнопка панели инструментов: идентификатор, подпись, иконка и действие.
+/// Toolbar button: identifier, label, icon and action.
 struct Button {
     id: &'static str,
     label: &'static str,
@@ -95,7 +95,7 @@ fn buttons() -> [Button; 18] {
     ]
 }
 
-/// Порядок кнопок, пустая строка разделяет группы.
+/// Button order, an empty string separates groups.
 const TOOLBAR_LAYOUT: [&str; 25] = [
     "undo",
     "redo",
@@ -124,16 +124,16 @@ const TOOLBAR_LAYOUT: [&str; 25] = [
     "print",
 ];
 
-/// Что делает мышь на холсте.
+/// What the mouse does on the canvas.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Pointer {
     Select,
     Draw(Tool),
-    /// Пипетка: показывает цвет под мышью и копирует его по щелчку.
+    /// Color picker: shows the color under the mouse and copies it on click.
     Pick,
 }
 
-/// Инструменты на панели слева: что делает мышь, подсказка, иконка и клавиша.
+/// Tools on the left panel: what the mouse does, tooltip, icon and key.
 const PALETTE: [(Pointer, &str, &[u8], u16); 15] = [
     (Pointer::Select, "Select (V)", assets::POINTER, keys::V),
     (Pointer::Draw(Tool::Arrow), "Arrow (A)", assets::ARROW, keys::A),
@@ -152,12 +152,12 @@ const PALETTE: [(Pointer, &str, &[u8], u16); 15] = [
     (Pointer::Pick, "Color Picker (I)", assets::PIPETTE, keys::I),
 ];
 
-/// Что сейчас делает мышь.
+/// What the mouse is doing right now.
 enum Drag {
-    /// Новая аннотация, ещё не в документе.
+    /// New annotation, not in the document yet.
     Draw(Annotation),
-    /// Перенос аннотации `index`. `current` - как она выглядит сейчас, `moved` - сдвинули ли её вообще,
-    /// `snap` - к чему она прилипла.
+    /// Moving annotation `index`. `current` is how it looks now, `moved` tells whether it moved at all,
+    /// `snap` is what it snapped to.
     Move {
         index: usize,
         grip: Grip,
@@ -169,7 +169,7 @@ enum Drag {
     },
 }
 
-/// Элементы окна подложки.
+/// Backdrop popover controls.
 struct BackdropControls {
     enabled: Retained<NSButton>,
     kind: Retained<NSPopUpButton>,
@@ -184,9 +184,9 @@ struct BackdropControls {
 }
 
 struct EditorIvars {
-    /// Основы документа и добавленные снимки. 0 - исходный снимок, основы появляются при впечатывании аннотаций.
+    /// Document bases and added screenshots. 0 is the original, bases appear when annotations are flattened.
     images: RefCell<Vec<CFRetained<CGImage>>>,
-    /// Пикселей снимка на точку экрана, где его сняли. Нужен для DPI при экспорте и толщины линий.
+    /// Screenshot pixels per point of the screen it was captured on. Used for export DPI and line widths.
     scale: f64,
     shot: Option<Shot>,
     history: RefCell<History<Doc>>,
@@ -194,21 +194,21 @@ struct EditorIvars {
     pointer: Cell<Pointer>,
     color: Cell<Color>,
     size: Cell<Size>,
-    /// Выбранный стиль каждого инструмента, по `Tool::index`.
+    /// Selected style of each tool, by `Tool::index`.
     styles: Cell<[usize; Tool::ALL.len()]>,
-    /// Запись цвета пипетки, по номеру в `measure::FORMATS`.
+    /// Color picker format, by index in `measure::FORMATS`.
     pick_format: Cell<usize>,
-    /// Цвет под пипеткой и где он, в пикселях основы.
+    /// Color under the picker and where it is, in base pixels.
     hover: Cell<Option<(Point, [u8; 3])>>,
-    /// Где снимок лежит на холсте с подложкой. Без подложки - во весь холст.
+    /// Where the screenshot sits on the backdrop canvas. Without a backdrop it fills the canvas.
     layout: Cell<Layout>,
-    /// Последние настройки подложки, чтобы включение возвращало их.
+    /// Last backdrop settings, so turning it back on restores them.
     last_backdrop: Cell<Backdrop>,
     backdrop_popover: OnceCell<Retained<NSPopover>>,
     backdrop_controls: OnceCell<BackdropControls>,
     selected: Cell<Option<usize>>,
     drag: RefCell<Option<Drag>>,
-    /// Аннотация, которой нет на картинке холста, пока её тянут.
+    /// Annotation missing from the canvas image while it is dragged.
     hidden: Cell<Option<usize>>,
     window: OnceCell<Retained<NSWindow>>,
     scroll: OnceCell<Retained<NSScrollView>>,
@@ -219,7 +219,7 @@ struct EditorIvars {
     color_well: OnceCell<Retained<NSColorWell>>,
     size_popup: OnceCell<Retained<NSPopUpButton>>,
     style_popup: OnceCell<Retained<NSPopUpButton>>,
-    /// Поля ширины и высоты открытого окна изменения размера.
+    /// Width and height fields of the open resize dialog.
     size_fields: RefCell<Option<(Retained<NSTextField>, Retained<NSTextField>)>>,
 }
 
@@ -384,11 +384,11 @@ define_class!(
             if let Some(editor) = closed {
                 RETIRED.with_borrow_mut(|retired| retired.push(editor));
                 dispatch2::DispatchQueue::main().exec_async(|| drop(RETIRED.take()));
-                // Освобождённые буферы снимка malloc держит про запас, и Kadro оставался бы на сотнях
-                // мегабайт после закрытия редактора. Через секунду Core Animation успевает отпустить
-                // свои копии картинки, и свободное возвращается системе.
+                // malloc keeps freed screenshot buffers in reserve, and Kadro would stay at hundreds
+                // of megabytes after the editor closes. A second later Core Animation has released
+                // its copies of the image, and the free memory goes back to the system.
                 let relieve = RcBlock::new(|_timer: NonNull<NSTimer>| {
-                    // SAFETY: null означает все зоны malloc, функция возвращает системе только свободное.
+                    // SAFETY: null means all malloc zones, the function returns only free memory to the system.
                     unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
                 });
                 unsafe { NSTimer::scheduledTimerWithTimeInterval_repeats_block(1.0, false, &relieve) };
@@ -414,7 +414,7 @@ define_class!(
     }
 
     unsafe impl NSControlTextEditingDelegate for Editor {
-        // Ширина и высота связаны пропорцией: правка одного поля пересчитывает другое.
+        // Width and height are linked by aspect ratio, editing one field recalculates the other.
         #[unsafe(method(controlTextDidChange:))]
         fn size_field_changed(&self, notification: &NSNotification) {
             let fields = self.ivars().size_fields.borrow();
@@ -438,13 +438,13 @@ define_class!(
 );
 
 fn toolbar_identifiers() -> Retained<NSArray<NSString>> {
-    // SAFETY: системные константы - неизменяемые строки, живущие весь процесс.
+    // SAFETY: system constants are immutable strings that live for the whole process.
     let (space, flexible) = unsafe { (NSToolbarSpaceItemIdentifier, NSToolbarFlexibleSpaceItemIdentifier) };
     let mut ids = Vec::new();
     let upload = crate::settings::upload_enabled();
     for id in TOOLBAR_LAYOUT.into_iter().filter(|id| upload || *id != "upload") {
         if id.is_empty() {
-            // Гибкий пробел в узком окне сжимается до нуля, поэтому рядом стоит постоянный. Иначе группы слипаются.
+            // A flexible space shrinks to zero in a narrow window, so a fixed one sits next to it. Otherwise groups stick together.
             ids.extend([space.copy(), flexible.copy()]);
         } else {
             ids.push(NSString::from_str(id));
@@ -481,7 +481,7 @@ impl Editor {
         if let Some((label, control)) = control {
             item.setLabel(&NSString::from_str(label));
             item.setToolTip(Some(&NSString::from_str(label)));
-            // Панель ставит элементы вплотную по видимой рамке, поля есть только у обёртки.
+            // The toolbar packs items tight by their visible frame, only the wrapper has margins.
             let padded = NSStackView::stackViewWithViews(&NSArray::from_retained_slice(&[control]), self.mtm());
             padded.setEdgeInsets(NSEdgeInsets { top: 0.0, left: 4.0, bottom: 0.0, right: 4.0 });
             item.setView(Some(&padded));
@@ -527,8 +527,8 @@ impl Editor {
         (CGImage::width(Some(image)) as f64, CGImage::height(Some(image)) as f64)
     }
 
-    /// Применяет новый документ: запоминает его в истории и перерисовывает холст.
-    /// Под новый размер холст подгоняется, если изменились обрезка, размер или подложка.
+    /// Applies a new document: records it in the history and redraws the canvas.
+    /// The canvas is resized if the crop, size or backdrop changed.
     fn apply(&self, doc: Doc) {
         let refit = doc.state != self.state();
         self.ivars().history.borrow_mut().push(doc);
@@ -547,7 +547,7 @@ impl Editor {
         if moved { self.after_history(before) } else { NSBeep() }
     }
 
-    /// После отмены или повтора выделение может указывать на чужую или пропавшую аннотацию.
+    /// After undo or redo the selection may point to another or a missing annotation.
     fn after_history(&self, before: State) {
         self.ivars().drag.take();
         self.ivars().hidden.set(None);
@@ -567,7 +567,7 @@ impl Editor {
         }
     }
 
-    /// Обрезает по выделению на холсте, переведённому в пиксели результата.
+    /// Crops to the canvas selection converted to output pixels.
     fn crop_to(&self, selection: NSRect) {
         let doc = self.doc();
         let size = self.canvas().frame().size;
@@ -575,7 +575,7 @@ impl Editor {
         let factor = layout.width / size.width;
         let rect = PixelRect::new(
             selection.origin.x * factor - layout.content.0,
-            // У холста начало внизу, у пикселей снимка - вверху.
+            // The canvas has the origin at the bottom, screenshot pixels at the top.
             (size.height - selection.origin.y - selection.size.height) * factor - layout.content.1,
             selection.size.width * factor,
             selection.size.height * factor,
@@ -583,7 +583,7 @@ impl Editor {
         self.apply(Doc { state: doc.state.cropped(rect), ..doc });
     }
 
-    /// Впечатывает аннотации в новую основу. Отмена возвращает и аннотации, и прежнюю основу.
+    /// Flattens annotations into a new base. Undo restores both the annotations and the previous base.
     fn rasterize(&self) {
         let doc = self.doc();
         if doc.annotations.is_empty() {
@@ -598,14 +598,14 @@ impl Editor {
         self.apply(Doc { annotations: Vec::new(), base, ..doc });
     }
 
-    /// Запоминает картинку в списке картинок редактора и возвращает её номер.
+    /// Stores the image in the editor image list and returns its index.
     fn keep(&self, image: CFRetained<CGImage>) -> usize {
         let mut images = self.ivars().images.borrow_mut();
         images.push(image);
         images.len() - 1
     }
 
-    /// Перерисовывает результат и подгоняет под него холст.
+    /// Redraws the output and fits the canvas to it.
     fn refresh(&self, refit: bool) {
         let doc = self.doc();
         let presented = present(&self.ivars().images.borrow(), &doc, self.ivars().hidden.get(), self.ivars().scale);
@@ -633,7 +633,7 @@ impl Editor {
         }
     }
 
-    /// Размер в точках, при котором масштаб 1 - это один пиксель снимка на пиксель экрана.
+    /// Size in points at which zoom 1 is one screenshot pixel per screen pixel.
     fn points(&self, width: f64, height: f64) -> NSSize {
         let backing = self.ivars().window.get().map_or(2.0, |w| w.backingScaleFactor());
         NSSize::new(width / backing, height / backing)
@@ -662,7 +662,7 @@ impl Editor {
         );
     }
 
-    /// 100%, если снимок помещается в окно, иначе целиком в окне.
+    /// 100% if the screenshot fits the window, otherwise fit to window.
     fn initial_zoom(&self) {
         let fits = {
             let content = self.scroll().contentSize();
@@ -675,7 +675,7 @@ impl Editor {
         }
     }
 
-    /// Точка холста в пикселях основы.
+    /// Canvas point in base pixels.
     fn to_base(&self, p: NSPoint) -> Point {
         let state = self.state();
         let size = self.canvas().frame().size;
@@ -685,7 +685,7 @@ impl Editor {
         state.to_source(x, y)
     }
 
-    /// Пикселей основы на экранную точку при текущем масштабе.
+    /// Base pixels per screen point at the current zoom.
     fn base_per_point(&self) -> f64 {
         let state = self.state();
         let layout = self.ivars().layout.get();
@@ -714,7 +714,7 @@ impl Editor {
         self.redraw_marks();
     }
 
-    /// Инструмент, чей стиль показывают и меняют элементы управления: выделенной аннотации или текущий.
+    /// Tool whose style the controls show and change: the selected annotation's or the current one.
     fn styled_tool(&self) -> Option<Tool> {
         match self.ivars().selected.get() {
             Some(index) => self.ivars().history.borrow().current().annotations.get(index).map(|a| a.tool),
@@ -725,7 +725,7 @@ impl Editor {
         }
     }
 
-    /// Показывает в цвете, размере и стиле выделенную аннотацию или настройки текущего инструмента.
+    /// Shows the selected annotation or the current tool settings in the color, size and style controls.
     fn sync_controls(&self) {
         let ivars = self.ivars();
         let selected = ivars.selected.get().and_then(|i| ivars.history.borrow().current().annotations.get(i).cloned());
@@ -757,7 +757,7 @@ impl Editor {
         }
     }
 
-    /// Меняет выделенную аннотацию. Без выделения меняются только настройки для новых.
+    /// Changes the selected annotation. Without a selection only the settings for new ones change.
     fn restyle(&self, change: impl FnOnce(&mut Annotation)) {
         let Some(index) = self.ivars().selected.get() else { return };
         let mut doc = self.doc();
@@ -775,7 +775,7 @@ impl Editor {
         annotation
     }
 
-    /// Нажатие на холсте: берёт аннотацию, чтобы двигать, или начинает новую.
+    /// Mouse down on the canvas: grabs an annotation to move or starts a new one.
     fn press(&self, p: Point, clicks: isize) {
         let doc = self.doc();
         let tolerance = HIT_TOLERANCE * self.base_per_point();
@@ -785,13 +785,13 @@ impl Editor {
         if pointer == Pointer::Pick {
             return self.pick(p);
         }
-        // Двойной щелчок по тексту правит его любым инструментом, а инструментом текста - и одиночный.
+        // A double click edits text with any tool, and with the text tool a single click does too.
         if let Some(index) = text_hit
             && (clicks >= 2 || pointer == Pointer::Draw(Tool::Text))
         {
             return self.edit_text(index);
         }
-        // Инструментом рисования берётся только выделенная аннотация, иначе рядом с другими нельзя было бы рисовать.
+        // A drawing tool grabs only the selected annotation, otherwise drawing next to others would be impossible.
         let grab = match pointer {
             Pointer::Draw(_) => {
                 self.ivars().selected.get().and_then(|i| doc.annotations[i].hit(p, tolerance).map(|g| (i, g)))
@@ -837,7 +837,7 @@ impl Editor {
                 *current = match *grip {
                     Grip::Body => {
                         let shifted = original.moved(p.x - from.x, p.y - from.y);
-                        // Края и центр прилипают к краям и центрам холста и других аннотаций.
+                        // Edges and center snap to the edges and centers of the canvas and other annotations.
                         *snap = annotation::snap(shifted.bounds(), &targets(*index), tolerance);
                         shifted.moved(snap.dx, snap.dy)
                     }
@@ -849,7 +849,7 @@ impl Editor {
                 }
             }
         }
-        // Картинку без переносимой аннотации достаточно нарисовать один раз, дальше её рисует слой поверх.
+        // The image without the moved annotation is drawn once, after that the layer on top draws it.
         if started.is_some() {
             self.ivars().hidden.set(started);
             self.refresh(false);
@@ -882,7 +882,7 @@ impl Editor {
         self.sync_controls();
     }
 
-    /// Щелчок линейкой без протягивания: две линейки, поперёк и вдоль, между краями ровного участка под точкой.
+    /// Ruler click without dragging: two rulers, across and along, between the edges of the flat area under the point.
     fn edge_rulers(&self, click: &Annotation, doc: &Doc) -> Vec<Annotation> {
         let base = self.base(doc);
         let crop = doc.state.crop;
@@ -906,7 +906,7 @@ impl Editor {
         rulers
     }
 
-    /// Пиксель результата под точкой основы.
+    /// Output pixel under a base point.
     fn output_pixel(&self, p: Point) -> (usize, usize) {
         let state = self.state();
         let layout = self.ivars().layout.get();
@@ -915,7 +915,7 @@ impl Editor {
         ((x.max(0.0) as usize).min(layout.width as usize - 1), (y.max(0.0) as usize).min(layout.height as usize - 1))
     }
 
-    /// Пипетка над холстом: запоминает цвет под мышью для рамки рядом с ней.
+    /// Color picker over the canvas: remembers the color under the mouse for the frame next to it.
     fn hover(&self, p: Option<Point>) {
         if self.ivars().pointer.get() != Pointer::Pick {
             return;
@@ -931,21 +931,21 @@ impl Editor {
         self.redraw_marks();
     }
 
-    /// Копирует цвет пикселя под точкой в выбранной записи.
+    /// Copies the color of the pixel under the point in the selected format.
     fn pick(&self, p: Point) {
         let (x, y) = self.output_pixel(p);
         let Some(color) = measure::pixel(&self.rendered(), x, y) else { return NSBeep() };
         let text = measure::format(color, self.ivars().pick_format.get());
         let pasteboard = NSPasteboard::generalPasteboard();
         pasteboard.clearContents();
-        // SAFETY: системная константа типа буфера обмена живёт весь процесс.
+        // SAFETY: the system pasteboard type constant lives for the whole process.
         pasteboard.setString_forType(&NSString::from_str(&text), unsafe { NSPasteboardTypeString });
         if let Some(screen) = self.window().screen() {
             preview::popup_on(self.mtm(), &format!("Copied {text}"), &screen);
         }
     }
 
-    /// Ждёт снимок области и кладёт его на холст. Снимок не копируется и не сохраняется.
+    /// Waits for an area screenshot and places it on the canvas. The screenshot is not copied or saved.
     fn add_capture(&self) {
         ADD_TARGET.set(Some(Weak::new(self)));
         output::route_next(output::Route::Editor);
@@ -954,8 +954,8 @@ impl Editor {
         }
     }
 
-    /// Кладёт снимок в середину видимой части. Плотность пикселей подгоняется под основу,
-    /// а слишком большой снимок уменьшается, чтобы поместиться.
+    /// Places the screenshot in the middle of the visible area. Pixel density is matched to the base,
+    /// and a screenshot that is too large is scaled down to fit.
     fn place(&self, image: CFRetained<CGImage>, capture_scale: f64) {
         let mut doc = self.doc();
         let crop = doc.state.crop;
@@ -977,7 +977,7 @@ impl Editor {
         self.window().makeKeyAndOrderFront(None);
     }
 
-    /// GIF из двух кадров по секунде: с аннотациями и без них.
+    /// Two-frame GIF, one second each: with and without annotations.
     fn export_gif(&self) {
         let doc = self.doc();
         let plain = Doc { annotations: Vec::new(), ..doc.clone() };
@@ -1002,7 +1002,7 @@ impl Editor {
         }
     }
 
-    /// Показывает настройки подложки под кнопкой панели инструментов.
+    /// Shows the backdrop settings under the toolbar button.
     fn show_backdrop(&self, item: &NSToolbarItem) {
         let popover = self.ivars().backdrop_popover.get_or_init(|| self.backdrop_popover());
         self.sync_backdrop_controls();
@@ -1094,7 +1094,7 @@ impl Editor {
         popover
     }
 
-    /// Показывает в окне подложки её текущие настройки или последние, если она выключена.
+    /// Shows the current backdrop settings in the popover, or the last ones if it is off.
     fn sync_backdrop_controls(&self) {
         let Some(controls) = self.ivars().backdrop_controls.get() else { return };
         let current = self.doc().backdrop;
@@ -1115,7 +1115,7 @@ impl Editor {
         controls.auto_crop.setState(on(backdrop.auto_crop));
     }
 
-    /// Собирает подложку из элементов окна. Любая правка, кроме самого флажка, включает подложку.
+    /// Builds the backdrop from the popover controls. Any edit except the checkbox itself turns the backdrop on.
     fn backdrop_changed(&self, sender: &AnyObject) {
         let Some(controls) = self.ivars().backdrop_controls.get() else { return };
         let toggled = std::ptr::eq(sender, controls.enabled.as_ref() as &AnyObject);
@@ -1147,7 +1147,7 @@ impl Editor {
         self.set_backdrop(Some(Backdrop { fill: change(backdrop.fill), ..backdrop }));
     }
 
-    /// Ставит подложку. Пока тянут ползунок, правка заменяет предыдущую, а не добавляет шаг отмены.
+    /// Sets the backdrop. While a slider is dragged, the edit replaces the previous one instead of adding an undo step.
     fn set_backdrop(&self, backdrop: Option<Backdrop>) {
         if let Some(backdrop) = backdrop {
             self.ivars().last_backdrop.set(backdrop);
@@ -1188,7 +1188,7 @@ impl Editor {
         self.sync_controls();
     }
 
-    /// Правит текст. Пустой текст удаляет аннотацию.
+    /// Edits text. Empty text deletes the annotation.
     fn edit_text(&self, index: usize) {
         let mut doc = self.doc();
         let Some(current) = doc.annotations.get(index).map(|a| a.text.clone()) else { return };
@@ -1206,7 +1206,7 @@ impl Editor {
         self.sync_controls();
     }
 
-    /// Спрашивает текст. None - отмена или пустая строка там, где текста ещё не было.
+    /// Asks for text. None means cancel, or an empty string where there was no text yet.
     fn ask_text(&self, title: &str, initial: &str) -> Option<String> {
         let mtm = self.mtm();
         let field = NSTextField::textFieldWithString(&NSString::from_str(initial), mtm);
@@ -1224,14 +1224,14 @@ impl Editor {
         if text.trim().is_empty() && initial.is_empty() { None } else { Some(text) }
     }
 
-    /// Рисует в слое поверх холста аннотацию под мышью и рамку выделенной.
-    /// `size` - размер слоя, его начало вверху слева.
+    /// Draws the annotation under the mouse and the selection frame in the layer over the canvas.
+    /// `size` is the layer size, its origin is at the top left.
     fn draw_marks(&self, size: NSSize) {
         let history = self.ivars().history.borrow();
         let doc = history.current();
         let (crop, state) = (doc.state.crop, doc.state);
         let layout = self.ivars().layout.get();
-        // Точки слоя, пиксели холста с подложкой, пиксели снимка и пиксели основы.
+        // Layer points, backdrop canvas pixels, screenshot pixels and base pixels.
         let transform = NSAffineTransform::transform();
         transform.scaleXBy_yBy(size.width / layout.width, size.height / layout.height);
         transform.translateXBy_yBy(layout.content.0, layout.content.1);
@@ -1311,7 +1311,7 @@ impl Editor {
         NSPrintOperation::printOperationWithView(view).runOperation();
     }
 
-    /// Спрашивает новый размер. Ширина и высота связаны пропорцией.
+    /// Asks for a new size. Width and height are linked by aspect ratio.
     fn ask_size(&self) {
         let mtm = self.mtm();
         let doc = self.doc();
@@ -1348,7 +1348,7 @@ impl Editor {
         }
     }
 
-    /// Esc: снимает выделение, а без него копирует, сохраняет или просто закрывает - как выбрано в настройках.
+    /// Esc clears the selection, and without one copies, saves or just closes, as chosen in settings.
     fn escape(&self) {
         if self.ivars().selected.get().is_some() {
             return self.select(None);
@@ -1361,7 +1361,7 @@ impl Editor {
         self.window().close();
     }
 
-    /// Клавиши с ⌘. Окно меню не имеет, поэтому сочетания разбираются здесь.
+    /// Keys with ⌘. The window has no menu, so shortcuts are handled here.
     fn key_equivalent(&self, event: &NSEvent) -> bool {
         let flags = event.modifierFlags();
         if !flags.contains(NSEventModifierFlags::Command) {
@@ -1386,7 +1386,7 @@ impl Editor {
     }
 }
 
-/// Рамка выделенной аннотации и ручки на её точках. Размеры - в экранных точках при любом масштабе.
+/// Selection frame and handles on its points. Sizes are in screen points at any zoom.
 fn handles(annotation: &Annotation, base_per_point: f64, scale: f64) {
     let (min, max) = annotation.bounds();
     let pad = 4.0 * base_per_point
@@ -1403,7 +1403,7 @@ fn handles(annotation: &Annotation, base_per_point: f64, scale: f64) {
         let border = NSBezierPath::bezierPathWithRect(frame);
         border.setLineWidth(base_per_point);
         let dash = [4.0 * base_per_point, 3.0 * base_per_point];
-        // SAFETY: массив из двух длин живёт до конца вызова.
+        // SAFETY: the two-length array lives until the end of the call.
         unsafe { border.setLineDash_count_phase(dash.as_ptr(), 2, 0.0) };
         NSColor::controlAccentColor().setStroke();
         border.stroke();
@@ -1424,7 +1424,7 @@ fn handles(annotation: &Annotation, base_per_point: f64, scale: f64) {
     }
 }
 
-/// Линии, к которым прилипла переносимая аннотация, через всю видимую часть.
+/// Lines the moved annotation snapped to, across the whole visible area.
 fn guides(snap: Snap, crop: PixelRect, base_per_point: f64) {
     let path = NSBezierPath::bezierPath();
     if let Some(x) = snap.x {
@@ -1440,7 +1440,7 @@ fn guides(snap: Snap, crop: PixelRect, base_per_point: f64) {
     path.stroke();
 }
 
-/// Квадрат с цветом под пипеткой и его запись рядом с мышью. Размеры в экранных точках.
+/// Square with the color under the picker and its value next to the mouse. Sizes are in screen points.
 fn swatch(p: Point, color: [u8; 3], format: usize, base_per_point: f64) {
     let [red, green, blue] = color.map(|c| f64::from(c) / 255.0);
     let side = 28.0 * base_per_point;
@@ -1457,7 +1457,7 @@ fn swatch(p: Point, color: [u8; 3], format: usize, base_per_point: f64) {
     square.stroke();
     let font = objc2_app_kit::NSFont::monospacedSystemFontOfSize_weight(12.0 * base_per_point, 0.0);
     let white = NSColor::whiteColor();
-    // SAFETY: ключи - системные константы атрибутов текста, они живут весь процесс.
+    // SAFETY: the keys are system text attribute constants, they live for the whole process.
     let keys = unsafe { [objc2_app_kit::NSFontAttributeName, objc2_app_kit::NSForegroundColorAttributeName] };
     let attributes = objc2_foundation::NSDictionary::<NSString, AnyObject>::from_slices(
         &keys,
@@ -1584,7 +1584,7 @@ define_class!(
             handled || unsafe { msg_send![super(self), performKeyEquivalent: event] }
         }
 
-        // ⌘ + колесо масштабирует всегда, просто колесо - если так выбрано в настройках.
+        // ⌘ + scroll wheel always zooms, the plain wheel only if chosen in settings.
         #[unsafe(method(scrollWheel:))]
         fn scroll_wheel(&self, event: &NSEvent) {
             let command = event.modifierFlags().contains(NSEventModifierFlags::Command);
@@ -1630,7 +1630,7 @@ struct OverlayIvars {
 }
 
 define_class!(
-    /// Затемнение и рамка обрезки поверх картинки. Мышь проходит сквозь него к холсту.
+    /// Dimming and crop frame over the image. The mouse passes through it to the canvas.
     #[unsafe(super(NSView, NSResponder, NSObject))]
     #[thread_kind = MainThreadOnly]
     #[ivars = OverlayIvars]
@@ -1649,7 +1649,7 @@ define_class!(
                 NSRectFillUsingOperation(selection, NSCompositingOperation::Clear);
                 NSColor::whiteColor().setStroke();
                 let border = NSBezierPath::bezierPathWithRect(selection);
-                // Рамка в один экранный пиксель при любом масштабе.
+                // One screen pixel frame at any zoom.
                 border.setLineWidth(1.0 / canvas.magnification());
                 border.stroke();
             }
@@ -1667,7 +1667,7 @@ struct MarksIvars {
 }
 
 define_class!(
-    /// Аннотация под мышью и рамка выделенной поверх картинки. Мышь проходит сквозь него к холсту.
+    /// Annotation under the mouse and the selection frame over the image. The mouse passes through it to the canvas.
     #[unsafe(super(NSView, NSResponder, NSObject))]
     #[thread_kind = MainThreadOnly]
     #[ivars = MarksIvars]
@@ -1694,7 +1694,7 @@ define_class!(
 );
 
 define_class!(
-    /// Прокрутка, которая держит холст по центру, когда он меньше окна.
+    /// Scroll view that keeps the canvas centered when it is smaller than the window.
     #[unsafe(super(NSClipView, NSView, NSResponder, NSObject))]
     #[thread_kind = MainThreadOnly]
     struct CenteringClipView;
@@ -1717,7 +1717,7 @@ define_class!(
     }
 );
 
-/// Колонка инструментов слева от холста.
+/// Tool column to the left of the canvas.
 fn palette(mtm: MainThreadMarker, editor: &Editor, height: f64) -> (Retained<NSStackView>, Vec<Retained<NSButton>>) {
     let buttons: Vec<_> = PALETTE
         .iter()
@@ -1727,7 +1727,7 @@ fn palette(mtm: MainThreadMarker, editor: &Editor, height: f64) -> (Retained<NSS
             let button =
                 unsafe { NSButton::buttonWithImage_target_action(&image, Some(editor), Some(sel!(chooseTool:)), mtm) };
             button.setButtonType(NSButtonType::PushOnPushOff);
-            // У Toolbar высота рамки постоянная и меньше иконки. FlexiblePush тянет рамку по размеру кнопки.
+            // Toolbar has a fixed frame height smaller than the icon. FlexiblePush stretches the frame to the button size.
             button.setBezelStyle(NSBezelStyle::FlexiblePush);
             button.widthAnchor().constraintEqualToConstant(PALETTE_BUTTON).setActive(true);
             button.heightAnchor().constraintEqualToConstant(PALETTE_BUTTON).setActive(true);
@@ -1766,7 +1766,7 @@ fn popup(mtm: MainThreadMarker, editor: &Editor, width: f64, titles: &[&str], ac
     popup
 }
 
-/// Открывает снимок в редакторе. Без `shot` - картинка из файла или буфера.
+/// Opens a screenshot in the editor. Without `shot`, an image from a file or the clipboard.
 pub fn open(mtm: MainThreadMarker, image: CFRetained<CGImage>, scale: f64, shot: Option<Shot>, title: &str) {
     let (width, height) = (CGImage::width(Some(&image)) as f64, CGImage::height(Some(&image)) as f64);
     let ivars = EditorIvars {
@@ -1828,14 +1828,14 @@ pub fn open(mtm: MainThreadMarker, image: CFRetained<CGImage>, scale: f64, shot:
             defer: false,
         ]
     };
-    // Окно держит EDITORS через редактор, иначе close() освободит его второй раз.
+    // The window holds EDITORS through the editor, otherwise close() would free it a second time.
     unsafe { window.setReleasedWhenClosed(false) };
     window.setTitle(&NSString::from_str(title));
     window.setContentMinSize(MIN_WINDOW);
     window.setLevel(if settings.editor_on_top { NSFloatingWindowLevel } else { NSNormalWindowLevel });
     window.setDelegate(Some(ProtocolObject::from_ref(&*editor)));
 
-    // Элементы стиля нужны делегату панели инструментов, поэтому создаются до неё.
+    // The toolbar delegate needs the style controls, so they are created before it.
     let color_well =
         NSColorWell::initWithFrame(NSColorWell::alloc(mtm), NSRect::new(NSPoint::ZERO, NSSize::new(38.0, 24.0)));
     color_well.setColorWellStyle(NSColorWellStyle::Minimal);
@@ -1941,14 +1941,14 @@ pub fn open(mtm: MainThreadMarker, image: CFRetained<CGImage>, scale: f64, shot:
     EDITORS.with_borrow_mut(|editors| editors.push(editor));
 }
 
-/// Кладёт снимок на холст редактора, который его ждал. Если редактор закрыли, снимок пропадает.
+/// Places a screenshot on the canvas of the editor that was waiting for it. If that editor was closed, the screenshot is dropped.
 pub fn place_capture(image: CFRetained<CGImage>, scale: f64) {
     if let Some(editor) = ADD_TARGET.take().and_then(|weak| weak.load()) {
         editor.place(image, scale);
     }
 }
 
-/// Открывает в редакторе последний снимок. Если снимков ещё не было, только сигналит.
+/// Opens the last screenshot in the editor. If there are no screenshots yet, only beeps.
 pub fn open_last(mtm: MainThreadMarker) {
     match pin::load_last() {
         Some((image, scale)) => open(mtm, image, scale, pin::last_shot(), "Screenshot"),
@@ -1956,7 +1956,7 @@ pub fn open_last(mtm: MainThreadMarker) {
     }
 }
 
-/// Открывает картинку из файла.
+/// Opens an image from a file.
 pub fn open_file(mtm: MainThreadMarker, path: &Path) {
     let decoded = std::fs::read(path).ok().and_then(|bytes| output::decode(&bytes));
     let Some((image, scale)) = decoded else {
@@ -1970,7 +1970,7 @@ pub fn open_file(mtm: MainThreadMarker, path: &Path) {
     open(mtm, image, scale, None, &title);
 }
 
-/// Предлагает выбрать картинку и открывает её.
+/// Asks to pick an image and opens it.
 pub fn choose_file(mtm: MainThreadMarker) {
     let panel = NSOpenPanel::openPanel(mtm);
     if let Some(images) = UTType::typeWithIdentifier(ns_string!("public.image")) {
@@ -1984,10 +1984,10 @@ pub fn choose_file(mtm: MainThreadMarker) {
     }
 }
 
-/// Открывает картинку из буфера обмена. Если там нет картинки, только сигналит.
+/// Opens an image from the clipboard. If there is no image, only beeps.
 pub fn open_clipboard(mtm: MainThreadMarker) {
     let pasteboard = NSPasteboard::generalPasteboard();
-    // SAFETY: системные константы типов буфера обмена живут весь процесс.
+    // SAFETY: the system pasteboard type constants live for the whole process.
     let types = unsafe { [NSPasteboardTypePNG, NSPasteboardTypeTIFF] };
     let decoded =
         types.iter().find_map(|kind| pasteboard.dataForType(kind)).and_then(|data| output::decode(&data.to_vec()));
