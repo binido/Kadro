@@ -1,8 +1,8 @@
-//! Ссылки `kadro://` для автоматизации: снимки, распознавание, закрепление, загрузка,
-//! открытие файлов и часть настроек.
+//! `kadro://` links for automation: screenshots, text recognition, pinning, upload,
+//! opening files and some settings.
 //!
-//! По умолчанию ссылки выключены. Включённые выполняются сразу или после вопроса, как выбрано
-//! в настройках, потому что ссылку может открыть любое приложение или страница.
+//! Links are off by default. When on, they run right away or after a prompt, as chosen
+//! in settings, because any app or web page can open a link.
 
 use std::path::PathBuf;
 
@@ -18,18 +18,18 @@ use crate::{editor, prefs};
 
 pub const SCHEME: &str = "kadro";
 
-/// Что просит ссылка.
+/// What a link asks for.
 #[derive(Clone, PartialEq, Debug)]
 pub enum Command {
     Run(Action),
     Open(PathBuf),
     Clipboard,
     Settings,
-    /// Пары ключ и значение настроек, уже проверенные.
+    /// Settings key and value pairs, already validated.
     Set(Vec<(&'static str, String)>),
 }
 
-/// Пути ссылок и действия, которые они запускают. Тот же список - в README.
+/// Link paths and the actions they run. The same list is in docs/guide.md.
 const ROUTES: [(&str, Action); 12] = [
     ("capture/region", Action::Region),
     ("capture/repeat", Action::RepeatRegion),
@@ -45,7 +45,7 @@ const ROUTES: [(&str, Action); 12] = [
     ("library", Action::OpenLibrary),
 ];
 
-/// Разбирает ссылку. Ошибка - понятное объяснение, что в ней не так.
+/// Parses a link. The error is a readable explanation of what is wrong with it.
 pub fn parse(url: &str) -> Result<Command, String> {
     let rest = url
         .strip_prefix(&format!("{SCHEME}://"))
@@ -81,7 +81,7 @@ pub fn parse(url: &str) -> Result<Command, String> {
     }
 }
 
-/// Проверяет одну настройку и возвращает её ключ в `NSUserDefaults` и значение для записи.
+/// Validates one setting and returns its `NSUserDefaults` key and the value to write.
 fn setting(key: &str, value: &str) -> Result<(&'static str, String), String> {
     fn choice<T: Choice>(value: &str) -> Result<(&'static str, String), String> {
         let known: Vec<_> = T::ALL.iter().map(|c| c.key()).collect();
@@ -108,7 +108,7 @@ fn setting(key: &str, value: &str) -> Result<(&'static str, String), String> {
     }
 }
 
-/// Раскодирует `%XX` и `+` из строки запроса. Неправильная последовательность остаётся как есть.
+/// Decodes `%XX` and `+` in a query string. An invalid sequence is kept as is.
 fn decode(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -132,7 +132,7 @@ fn decode(text: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Выполняет ссылку, если ссылки включены, а в режиме вопроса - после согласия.
+/// Runs a link if links are on, and in prompt mode after the user agrees.
 pub fn handle(mtm: MainThreadMarker, url: &str) {
     let command = match parse(url) {
         Ok(command) => command,

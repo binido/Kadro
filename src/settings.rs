@@ -1,4 +1,4 @@
-//! Пользовательские настройки Kadro, которые хранятся в `NSUserDefaults`.
+//! Kadro user settings stored in `NSUserDefaults`.
 
 use std::path::PathBuf;
 
@@ -14,7 +14,7 @@ pub const DOWNSCALE_RETINA: &str = "downscaleRetina";
 pub const CURSOR: &str = "cursor";
 pub const FILE_NAME_TEMPLATE: &str = "fileNameTemplate";
 pub const LAST_AREA: &str = "lastArea";
-/// Старый флаг превью. Учитывается, только если `AFTER_CAPTURE` не сохранён.
+/// Legacy preview flag. Used only if `AFTER_CAPTURE` is not saved.
 pub const SHOW_PREVIEW: &str = "showPreview";
 pub const AFTER_CAPTURE: &str = "afterCapture";
 pub const EDITOR_ESC: &str = "editorEsc";
@@ -31,20 +31,20 @@ pub const CONFIRMATION: &str = "confirmation";
 
 pub const DEFAULT_FILE_NAME_TEMPLATE: &str = "Kadro {date} at {time}";
 
-/// Настройка с выбором из нескольких вариантов: хранится строкой и показывается радиокнопками.
+/// Setting with a choice of several variants: stored as a string and shown as radio buttons.
 pub trait Choice: Copy + PartialEq + 'static {
-    /// Ключ настройки в `NSUserDefaults`.
+    /// Setting key in `NSUserDefaults`.
     const DEFAULTS_KEY: &'static str;
-    /// Все варианты в порядке радиокнопок в настройках.
+    /// All variants in radio button order in settings.
     const ALL: &'static [Self];
 
-    /// Подпись радиокнопки.
+    /// Radio button label.
     fn title(self) -> &'static str;
 
-    /// Значение варианта в `NSUserDefaults`.
+    /// Variant value in `NSUserDefaults`.
     fn key(self) -> &'static str;
 
-    /// Вариант по сохранённому значению. `None`, если значение незнакомо.
+    /// Variant by the saved value. `None` if the value is unknown.
     fn from_key(key: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|choice| choice.key() == key)
     }
@@ -55,12 +55,12 @@ pub enum Format {
     Png,
     Jpeg,
     Heic,
-    /// PNG или JPEG в зависимости от содержимого снимка.
+    /// PNG or JPEG depending on the screenshot content.
     Auto,
 }
 
 impl Format {
-    // Auto заменяется на PNG или JPEG до кодирования, поэтому у него нет своего типа и расширения.
+    // Auto is replaced with PNG or JPEG before encoding, so it has no type or extension of its own.
     pub fn uti(self) -> &'static str {
         match self {
             Format::Png | Format::Auto => "public.png",
@@ -101,10 +101,10 @@ impl Choice for Format {
     }
 }
 
-/// Показывать ли курсор на снимке.
+/// Whether to show the cursor on the screenshot.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Cursor {
-    /// Только на снимках всего экрана.
+    /// Only on full-screen screenshots.
     Auto,
     Show,
     Hide,
@@ -131,16 +131,16 @@ impl Choice for Cursor {
     }
 }
 
-/// Что лежит за окном на снимке окна.
+/// What is behind the window on a window screenshot.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum WindowBackground {
-    /// Только окно, без тени, со скруглёнными углами, достроенными до прямоугольника.
+    /// Only the window, without a shadow, with rounded corners filled to a rectangle.
     Clean,
-    /// Окно с тенью на прозрачном фоне.
+    /// Window with a shadow on a transparent background.
     Shadow,
-    /// Окно с тенью на обоях его экрана.
+    /// Window with a shadow on its screen wallpaper.
     Wallpaper,
-    /// Окно с тенью на цвете из настроек.
+    /// Window with a shadow on the color from settings.
     Color,
 }
 
@@ -168,7 +168,7 @@ impl Choice for WindowBackground {
     }
 }
 
-/// Наибольшая высота склеенного снимка прокрутки.
+/// Largest height of a stitched scrolling screenshot.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum ScrollLimit {
     Short,
@@ -211,7 +211,7 @@ impl Choice for ScrollLimit {
     }
 }
 
-/// Насколько далеко прокручивать за шаг автоматической прокрутки.
+/// How far to scroll per automatic scrolling step.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum ScrollSpeed {
     Slow,
@@ -220,7 +220,7 @@ pub enum ScrollSpeed {
 }
 
 impl ScrollSpeed {
-    /// Шаг как доля высоты области.
+    /// Step as a share of the area height.
     pub fn step(self) -> f64 {
         match self {
             ScrollSpeed::Slow => 0.3,
@@ -262,17 +262,17 @@ pub const CHECK_UPDATES: &str = "checkForUpdates";
 pub const UPLOAD_ENABLED: &str = "uploadEnabled";
 pub const LINKS_ENABLED: &str = "urlSchemeEnabled";
 pub const LAST_UPDATE_CHECK: &str = "lastUpdateCheck";
-/// Название вкладки, открытой в настройках последней.
+/// Name of the settings tab opened last.
 pub const SETTINGS_TAB: &str = "settingsTab";
 
-/// Какую ссылку копировать после загрузки.
+/// Which link to copy after upload.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum LinkKind {
-    /// Только загрузить.
+    /// Upload only.
     None,
-    /// Подписанная ссылка, которая работает ограниченное время.
+    /// Presigned link that works for a limited time.
     Presigned,
-    /// Постоянная ссылка на публичный бакет или его домен.
+    /// Permanent link to a public bucket or its domain.
     Public,
 }
 
@@ -297,7 +297,7 @@ impl Choice for LinkKind {
     }
 }
 
-/// Сколько работает временная ссылка. S3 разрешает не больше 7 дней.
+/// How long a presigned link works. S3 allows at most 7 days.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum LinkExpiry {
     Hour,
@@ -336,7 +336,7 @@ impl Choice for LinkExpiry {
     }
 }
 
-/// Сколько снимков помнит библиотека. Старые выпадают из индекса, файлы остаются.
+/// How many screenshots the library remembers. Old ones drop out of the index, the files stay.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum LibraryLimit {
     Thousand,
@@ -380,16 +380,16 @@ impl Choice for LibraryLimit {
     }
 }
 
-/// Что делать со ссылками `kadro://`, когда они включены.
+/// What to do with `kadro://` links when they are on.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum LinkPolicy {
-    /// Спрашивать перед каждой ссылкой.
+    /// Ask before every link.
     Ask,
     Allow,
 }
 
 impl Choice for LinkPolicy {
-    // Сохранённое старыми версиями "off" не распознаётся, выключение хранит LINKS_ENABLED.
+    // "off" saved by older versions is not recognized, LINKS_ENABLED stores the off state.
     const DEFAULTS_KEY: &'static str = "urlScheme";
     const ALL: &'static [Self] = &[LinkPolicy::Ask, LinkPolicy::Allow];
 
@@ -408,7 +408,7 @@ impl Choice for LinkPolicy {
     }
 }
 
-/// Цвет из записи `#RRGGBB`.
+/// Color from a `#RRGGBB` string.
 pub fn parse_color(text: &str) -> Option<Color> {
     let digits = text.strip_prefix('#')?;
     let rgb = u32::from_str_radix(digits, 16).ok().filter(|_| digits.len() == 6)?;
@@ -416,12 +416,12 @@ pub fn parse_color(text: &str) -> Option<Color> {
     Some(Color { red: channel(16), green: channel(8), blue: channel(0), alpha: 1.0 })
 }
 
-/// Когда прятать превью после снимка.
+/// When to hide the preview after a screenshot.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum PreviewHiding {
-    /// Через несколько секунд без наведения или по клику в другом месте.
+    /// After a few seconds without hover or on a click elsewhere.
     Auto,
-    /// Только кнопкой закрытия.
+    /// Only with the close button.
     Manual,
 }
 
@@ -444,12 +444,12 @@ impl Choice for PreviewHiding {
     }
 }
 
-/// Как подтверждать копирование и сохранение, когда превью выключено.
+/// How to confirm copying and saving when the preview is off.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Confirmation {
-    /// Собственная всплывающая плашка Kadro.
+    /// Kadro's own popup banner.
     Popup,
-    /// Уведомление macOS.
+    /// macOS notification.
     Notification,
     None,
 }
@@ -475,7 +475,7 @@ impl Choice for Confirmation {
     }
 }
 
-/// Что показать после снимка.
+/// What to show after a screenshot.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum AfterCapture {
     Preview,
@@ -504,7 +504,7 @@ impl Choice for AfterCapture {
     }
 }
 
-/// Что делает Esc в редакторе, кроме закрытия.
+/// What Esc does in the editor besides closing.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum EscAction {
     Copy,
@@ -533,12 +533,12 @@ impl Choice for EscAction {
     }
 }
 
-/// Масштаб снимка при открытии редактора.
+/// Screenshot zoom when the editor opens.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum DefaultZoom {
-    /// Целиком в окне.
+    /// Fit to window.
     Fit,
-    /// 100%, если снимок помещается, иначе целиком в окне.
+    /// 100% if the screenshot fits, otherwise fit to window.
     Actual,
 }
 
@@ -561,7 +561,7 @@ impl Choice for DefaultZoom {
     }
 }
 
-/// Пользовательские настройки из `NSUserDefaults`.
+/// User settings from `NSUserDefaults`.
 pub struct Settings {
     pub copy_to_clipboard: bool,
     pub save_to_file: bool,
@@ -579,37 +579,37 @@ pub struct Settings {
     pub scroll_zoom: bool,
     pub window_background: WindowBackground,
     pub window_color: Color,
-    /// Язык распознавания текста. None - языки системы.
+    /// Text recognition language. None means system languages.
     pub recognition_language: Option<String>,
-    /// Склеивать распознанные строки в одну.
+    /// Join recognized lines into one.
     pub single_line: bool,
     pub scroll_limit: ScrollLimit,
     pub scroll_speed: ScrollSpeed,
-    /// Крутить в обратную сторону, для приложений с перевёрнутой прокруткой.
+    /// Scroll the other way, for apps with inverted scrolling.
     pub scroll_reverse: bool,
-    /// Вести библиотеку сохранённых снимков.
+    /// Keep a library of saved screenshots.
     pub library: bool,
     pub library_limit: LibraryLimit,
-    /// Выполнять ссылки `kadro://` из других приложений.
+    /// Run `kadro://` links from other apps.
     pub links_enabled: bool,
     pub links: LinkPolicy,
-    /// Загрузка в хранилище. Без неё прячутся вкладка Upload и все кнопки загрузки.
+    /// Upload to storage. Without it the Upload tab and all upload buttons are hidden.
     pub upload: bool,
-    /// Не показывать иконку в строке меню.
+    /// Hide the menu bar icon.
     pub hide_icon: bool,
-    /// Раз в день проверять, вышла ли новая версия.
+    /// Check once a day whether a new version is out.
     pub check_updates: bool,
 }
 
 impl Settings {
-    /// Читает настройки, подставляя значения по умолчанию для отсутствующих ключей.
+    /// Reads settings, filling in defaults for missing keys.
     pub fn load() -> Self {
         let save_to_file = flag(SAVE_TO_FILE).unwrap_or(true);
         let after_capture = choice().unwrap_or(match flag(SHOW_PREVIEW) {
             Some(false) => AfterCapture::Nothing,
             _ => AfterCapture::Preview,
         });
-        // Хотя бы одно действие после снимка включено всегда, иначе снимок пропадёт.
+        // At least one after-capture action is always on, otherwise the screenshot would be lost.
         let copy_to_clipboard =
             flag(COPY_TO_CLIPBOARD).unwrap_or(true) || (!save_to_file && after_capture == AfterCapture::Nothing);
         let directory = string(DIRECTORY)
@@ -647,7 +647,7 @@ impl Settings {
             scroll_reverse: flag(SCROLL_REVERSE).unwrap_or(false),
             library: flag(LIBRARY).unwrap_or(true),
             library_limit: choice().unwrap_or(LibraryLimit::FiveThousand),
-            // Ссылки, включённые до появления флага, остаются включёнными.
+            // Links turned on before the flag existed stay on.
             links_enabled: flag(LINKS_ENABLED).unwrap_or_else(|| choice::<LinkPolicy>().is_some()),
             links: choice().unwrap_or(LinkPolicy::Ask),
             upload: upload_enabled(),
@@ -657,12 +657,12 @@ impl Settings {
     }
 }
 
-/// Включена ли загрузка. Хранилище, настроенное до появления флага, её включает.
+/// Whether upload is on. Storage configured before the flag existed turns it on.
 pub fn upload_enabled() -> bool {
     flag(UPLOAD_ENABLED).unwrap_or_else(|| string(UPLOAD_BUCKET).is_some_and(|bucket| !bucket.trim().is_empty()))
 }
 
-/// Сохранённый флаг. `None`, если пользователь его ещё не менял.
+/// Saved flag. `None` if the user has not changed it yet.
 pub fn flag(key: &str) -> Option<bool> {
     let defaults = NSUserDefaults::standardUserDefaults();
     let key = NSString::from_str(key);
@@ -673,7 +673,7 @@ pub fn string(key: &str) -> Option<String> {
     NSUserDefaults::standardUserDefaults().stringForKey(&NSString::from_str(key)).map(|s| s.to_string())
 }
 
-/// Сохранённый вариант настройки. `None`, если его нет или значение незнакомо.
+/// Saved setting variant. `None` if it is missing or the value is unknown.
 pub fn choice<T: Choice>() -> Option<T> {
     string(T::DEFAULTS_KEY).and_then(|key| T::from_key(&key))
 }

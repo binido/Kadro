@@ -1,7 +1,7 @@
-//! Загрузка снимков в S3-совместимое хранилище и ссылка на них в буфере обмена.
+//! Uploading screenshots to S3-compatible storage and putting their link on the clipboard.
 //!
-//! Запросы подписываются в [`sigv4`] и уходят через URLSession. Ключи доступа хранятся
-//! в Связке ключей, остальные настройки хранилища - в `NSUserDefaults`.
+//! Requests are signed in [`sigv4`] and sent through URLSession. Access keys are stored
+//! in the Keychain, other storage settings in `NSUserDefaults`.
 
 use std::ffi::c_void;
 use std::sync::mpsc;
@@ -21,7 +21,7 @@ use crate::settings::{self, LinkExpiry, LinkKind};
 use crate::sigv4::{self, Credentials, Stamp};
 use crate::{output, prefs, preview};
 
-/// Служба Связки ключей и имена записей в ней.
+/// Keychain service and item names in it.
 const KEYCHAIN_SERVICE: &str = "Kadro S3";
 pub const ACCESS_KEY: &str = "access-key";
 pub const SECRET_KEY: &str = "secret-key";
@@ -41,11 +41,11 @@ unsafe extern "C" {
     fn SecItemDelete(query: &CFDictionary) -> i32;
 }
 
-/// Запрос к Связке ключей по записи `account` и дополнительные поля.
+/// Keychain query for the `account` item and extra fields.
 fn keychain_query(account: &str, extra: &[(&CFString, &CFType)]) -> CFRetained<CFDictionary<CFString, CFType>> {
     let service = CFString::from_str(KEYCHAIN_SERVICE);
     let account = CFString::from_str(account);
-    // SAFETY: ключи и значения - системные константы Security, они живут весь процесс.
+    // SAFETY: the keys and values are Security system constants, they live for the whole process.
     let mut keys: Vec<&CFString> = unsafe { vec![kSecClass, kSecAttrService, kSecAttrAccount] };
     let mut values: Vec<&CFType> =
         unsafe { vec![kSecClassGenericPassword.as_ref(), service.as_ref(), account.as_ref()] };
@@ -56,15 +56,15 @@ fn keychain_query(account: &str, extra: &[(&CFString, &CFType)]) -> CFRetained<C
     CFDictionary::from_slices(&keys, &values)
 }
 
-/// Секрет из Связки ключей. None, если его нет.
+/// Secret from the Keychain. None if it is missing.
 pub fn secret(account: &str) -> Option<String> {
     let yes = CFBoolean::new(true);
-    // SAFETY: системные константы Security живут весь процесс.
+    // SAFETY: Security system constants live for the whole process.
     let query = unsafe {
         keychain_query(account, &[(kSecReturnData, yes.as_ref()), (kSecMatchLimit, kSecMatchLimitOne.as_ref())])
     };
     let mut result: *const c_void = std::ptr::null();
-    // SAFETY: словарь живёт до конца вызова, результат - CFData с +1, который забирает CFRetained.
+    // SAFETY: the dictionary lives until the end of the call, the result is a +1 CFData that CFRetained takes over.
     let status = unsafe { SecItemCopyMatching(query.as_opaque(), &raw mut result) };
     if status != 0 || result.is_null() {
         return None;
@@ -73,15 +73,15 @@ pub fn secret(account: &str) -> Option<String> {
     String::from_utf8(data.to_vec()).ok()
 }
 
-/// Записывает секрет в Связку ключей. Пустое значение удаляет запись.
+/// Writes a secret to the Keychain. An empty value deletes the item.
 pub fn set_secret(account: &str, value: &str) {
-    // SAFETY: словарь живёт до конца вызова.
+    // SAFETY: the dictionary lives until the end of the call.
     unsafe { SecItemDelete(keychain_query(account, &[]).as_opaque()) };
     if value.is_empty() {
         return;
     }
     let data = CFData::from_bytes(value.as_bytes());
-    // SAFETY: системная константа Security живёт весь процесс, словарь - до конца вызова.
+    // SAFETY: the Security system constant lives for the whole process, the dictionary until the end of the call.
     let status = unsafe {
         SecItemAdd(keychain_query(account, &[(kSecValueData, data.as_ref())]).as_opaque(), std::ptr::null_mut())
     };
@@ -90,9 +90,9 @@ pub fn set_secret(account: &str, value: &str) {
     }
 }
 
-/// Настройки хранилища.
+/// Storage settings.
 pub struct Storage {
-    /// Пусто - AWS, иначе адрес совместимого хранилища.
+    /// Empty means AWS, otherwise the address of compatible storage.
     pub endpoint: String,
     pub region: String,
     pub bucket: String,
@@ -129,7 +129,7 @@ impl Storage {
         Credentials { access_key: &self.access_key, secret_key: &self.secret_key, region: &self.region }
     }
 
-    /// Схема, хост и путь объекта. AWS - бакет в имени хоста, остальные - бакет в пути.
+    /// Scheme, host and object path. AWS puts the bucket in the host name, others in the path.
     pub fn locate(&self, key: &str) -> (String, String, String) {
         if self.endpoint.is_empty() {
             let host = format!("{}.s3.{}.amazonaws.com", self.bucket, self.region);
@@ -144,7 +144,7 @@ impl Storage {
         if self.prefix.is_empty() { name.to_string() } else { format!("{}/{name}", self.prefix) }
     }
 
-    /// Подписанный запрос к объекту. Тело пустое для DELETE.
+    /// Signed request to the object. The body is empty for DELETE.
     fn request(
         &self,
         method: &str,
@@ -168,7 +168,7 @@ impl Storage {
         (format!("{scheme}://{host}{}", sigv4::encode(&path, true)), headers)
     }
 
-    /// Ссылка на объект по настройкам. None - ссылки не нужны.
+    /// Link to the object per settings. None means no link is needed.
     pub fn link(&self, key: &str, now: u64) -> Option<String> {
         let (scheme, host, path) = self.locate(key);
         match self.links {
@@ -186,7 +186,7 @@ impl Storage {
         }
     }
 
-    /// Загружает объект. Возвращает ссылку по настройкам.
+    /// Uploads an object. Returns the link per settings.
     pub fn put(&self, name: &str, body: &[u8], content_type: &str) -> Result<Option<String>, String> {
         let key = self.key(name);
         let now = unix_now();
@@ -195,7 +195,7 @@ impl Storage {
         Ok(self.link(&key, now))
     }
 
-    /// Загружает и удаляет маленький файл: так проверяются ключи, бакет и права на запись.
+    /// Uploads and deletes a small file, which checks the keys, bucket and write permission.
     pub fn test(&self) -> Result<(), String> {
         let key = self.key(".kadro-test");
         let (url, headers) = self.request("PUT", &key, b"Kadro", Some("text/plain"), unix_now());
@@ -209,7 +209,7 @@ fn unix_now() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
-/// Отправляет запрос и ждёт ответа. Возвращает тело ответа. Вызывается только вне главного потока.
+/// Sends a request and waits for the response. Returns the response body. Called only off the main thread.
 pub fn send(method: &str, url: &str, headers: &[(String, String)], body: &[u8]) -> Result<Vec<u8>, String> {
     let url = NSURL::URLWithString(&NSString::from_str(url)).ok_or("the address is not a valid URL")?;
     let request = NSMutableURLRequest::requestWithURL(&url);
@@ -239,7 +239,7 @@ pub fn send(method: &str, url: &str, headers: &[(String, String)], body: &[u8]) 
     receiver.recv().unwrap_or_else(|_| Err("the request was dropped".into()))
 }
 
-/// Текст ошибки из XML-ответа S3: `<Code>` и `<Message>`, если они есть.
+/// Error text from an S3 XML response: `<Code>` and `<Message>`, if present.
 pub fn error_message(status: isize, body: &[u8]) -> String {
     let text = String::from_utf8_lossy(body);
     let tag = |name: &str| {
@@ -263,7 +263,7 @@ fn mime(extension: &str) -> &'static str {
     }
 }
 
-/// Загружает снимок и кладёт ссылку в буфер обмена. Без настроек предлагает их открыть.
+/// Uploads the screenshot and puts the link on the clipboard. Without settings offers to open them.
 pub fn upload(mtm: MainThreadMarker, image: CFRetained<CGImage>, scale: f64, shot: Option<Shot>) {
     let storage = Storage::load();
     if !storage.is_configured() {
@@ -306,7 +306,7 @@ pub fn upload(mtm: MainThreadMarker, image: CFRetained<CGImage>, scale: f64, sho
     });
 }
 
-/// Загружает последний снимок. Если снимков ещё не было, только сигналит.
+/// Uploads the last screenshot. If there are no screenshots yet, only beeps.
 pub fn upload_last(mtm: MainThreadMarker) {
     match crate::pin::load_last() {
         Some((image, scale)) => upload(mtm, image, scale, crate::pin::last_shot()),
@@ -323,7 +323,7 @@ fn popup(mtm: MainThreadMarker, text: &str) {
 fn copy(text: &str) {
     let pasteboard = NSPasteboard::generalPasteboard();
     pasteboard.clearContents();
-    // SAFETY: системная константа типа буфера обмена живёт весь процесс.
+    // SAFETY: the system pasteboard type constant lives for the whole process.
     pasteboard.setString_forType(&NSString::from_str(text), unsafe { NSPasteboardTypeString });
 }
 

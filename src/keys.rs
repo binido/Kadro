@@ -1,6 +1,6 @@
-//! Виртуальные коды клавиш macOS, на которые Kadro реагирует напрямую.
+//! macOS virtual key codes Kadro handles directly.
 //!
-//! Коды не зависят от раскладки: они описывают физическое место клавиши на клавиатуре ANSI.
+//! The codes do not depend on the layout, they describe the physical key position on an ANSI keyboard.
 
 pub const A: u16 = 0;
 pub const S: u16 = 1;
@@ -27,7 +27,7 @@ pub const N: u16 = 45;
 pub const M: u16 = 46;
 pub const DELETE: u16 = 51;
 pub const ESCAPE: u16 = 53;
-/// Enter на цифровой клавиатуре.
+/// Enter on the numeric keypad.
 pub const ENTER: u16 = 76;
 pub const FORWARD_DELETE: u16 = 117;
 pub const LEFT: u16 = 123;

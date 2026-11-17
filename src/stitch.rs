@@ -1,8 +1,8 @@
-//! Склейка кадров прокрутки в одну длинную картинку.
+//! Stitching scroll frames into one long image.
 //!
-//! Сдвиг между соседними кадрами ищется по подписям строк: строка нового кадра должна совпасть
-//! со строкой прошлого, сдвинутой на искомое число пикселей. Строки, одинаковые в обоих кадрах
-//! на своих местах сверху и снизу, считаются закреплёнными шапкой и подвалом и в поиске не участвуют.
+//! The shift between neighbor frames is found by row signatures: a row of the new frame must match
+//! a row of the previous one shifted by the wanted number of pixels. Rows identical in both frames
+//! at their own places at the top and bottom count as a sticky header and footer and are left out of the search.
 
 use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{
@@ -10,13 +10,13 @@ use objc2_core_graphics::{
     CGImageByteOrderInfo,
 };
 
-/// Сколько строк перекрытия нужно, чтобы поверить найденному сдвигу.
+/// How many overlapping rows are needed to trust a found shift.
 const MIN_OVERLAP: usize = 8;
-/// Доля совпавших строк перекрытия, ниже которой сдвиг не принимается. Мигающий курсор
-/// или анимация портят несколько строк, но не больше.
+/// Share of matched overlapping rows below which a shift is rejected. A blinking cursor
+/// or an animation spoils a few rows, but no more.
 const MIN_MATCH: f64 = 0.95;
 
-/// Кадр: пиксели BGRA по строкам сверху вниз.
+/// Frame: BGRA pixels row by row from top to bottom.
 #[derive(Clone)]
 pub struct Frame {
     pub width: usize,
@@ -29,7 +29,7 @@ impl Frame {
         let (width, height) = (CGImage::width(Some(image)), CGImage::height(Some(image)));
         let mut pixels = vec![0u32; width * height];
         let space = CGImage::color_space(Some(image));
-        // SAFETY: буфер на width * height пикселей по 4 байта живёт дольше контекста.
+        // SAFETY: the buffer of width * height 4-byte pixels outlives the context.
         let context = unsafe {
             CGBitmapContextCreate(
                 pixels.as_mut_ptr().cast(),
@@ -51,14 +51,14 @@ impl Frame {
         &self.pixels[y * self.width..(y + 1) * self.width]
     }
 
-    /// Тот же кадр вверх ногами. Прокрутка вверх склеивается как прокрутка вниз перевёрнутых кадров.
+    /// The same frame upside down. Scrolling up is stitched as scrolling down of flipped frames.
     pub fn flipped(&self) -> Self {
         let pixels = (0..self.height).rev().flat_map(|y| self.row(y).iter().copied()).collect();
         Frame { pixels, ..*self }
     }
 }
 
-/// Подпись строки и то, однотонная ли она. Однотонные строки совпадают где угодно и сдвиг не выдают.
+/// Row signature and whether the row is flat. Flat rows match anywhere and do not reveal a shift.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Row {
     hash: u64,
@@ -69,7 +69,7 @@ pub fn rows(frame: &Frame) -> Vec<Row> {
     (0..frame.height)
         .map(|y| {
             let row = frame.row(y);
-            // FNV-1a по пикселям.
+            // FNV-1a over pixels.
             let hash = row.iter().fold(0xcbf2_9ce4_8422_2325u64, |hash, pixel| {
                 (hash ^ u64::from(*pixel)).wrapping_mul(0x0000_0100_0000_01b3)
             });
@@ -78,19 +78,19 @@ pub fn rows(frame: &Frame) -> Vec<Row> {
         .collect()
 }
 
-/// Как новый кадр лежит относительно прошлого.
+/// How the new frame sits relative to the previous one.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Shift {
-    /// На сколько строк содержимое уехало вверх. 0 - кадр не изменился.
+    /// How many rows the content moved up. 0 means the frame did not change.
     pub offset: usize,
-    /// Закреплённые строки сверху и снизу.
+    /// Sticky rows at the top and bottom.
     pub header: usize,
     pub footer: usize,
 }
 
-/// Ищет, на сколько строк уехало содержимое между кадрами. None - совпадения не нашлось.
-/// Сдвиг без единой несовпавшей строки лучше остальных. Из одинаково хороших `hint` выбирает
-/// ближайший к ожидаемому сдвигу, а без него берётся сдвиг с самым длинным перекрытием.
+/// Finds how many rows the content moved between frames. None means no match was found.
+/// A shift without a single mismatched row beats the rest. Among equally good ones `hint` picks
+/// the closest to the expected shift, without it the shift with the longest overlap wins.
 pub fn find_shift(previous: &[Row], next: &[Row], hint: Option<usize>) -> Option<Shift> {
     let height = previous.len().min(next.len());
     let header = (0..height).take_while(|y| previous[*y].hash == next[*y].hash).count();
@@ -101,7 +101,7 @@ pub fn find_shift(previous: &[Row], next: &[Row], hint: Option<usize>) -> Option
     let bottom = height - footer;
     let mut best: Option<(usize, usize, bool)> = None;
     for offset in 1..bottom - header {
-        // Строка y нового кадра - это строка y + offset прошлого.
+        // Row y of the new frame is row y + offset of the previous one.
         let (mut seen, mut matched) = (0, 0);
         for y in header..bottom - offset {
             if next[y].plain {
@@ -129,21 +129,21 @@ pub fn find_shift(previous: &[Row], next: &[Row], hint: Option<usize>) -> Option
     best.map(|(offset, ..)| Shift { offset, header, footer })
 }
 
-/// Что сделал новый кадр.
+/// What the new frame did.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Push {
-    /// Добавил столько строк.
+    /// Added this many rows.
     Added(usize),
-    /// Не сдвинулся: прокрутка дошла до конца или ещё не началась.
+    /// Did not move: scrolling reached the end or has not started yet.
     Same,
-    /// Не нашлось перекрытия с прошлым кадром, кадр пропущен.
+    /// No overlap with the previous frame, the frame was skipped.
     Lost,
 }
 
-/// Длинная картинка, которая растёт снизу.
+/// Long image that grows at the bottom.
 pub struct Stitcher {
     width: usize,
-    /// Всё склеенное, внизу всегда низ последнего кадра.
+    /// Everything stitched, the bottom is always the bottom of the last frame.
     pixels: Vec<u32>,
     last: Vec<Row>,
     frame_height: usize,
@@ -167,7 +167,7 @@ impl Stitcher {
         if shift.offset == 0 {
             return Push::Same;
         }
-        // Подвал прошлого кадра уходит, на его место встают новые строки и подвал этого кадра.
+        // The footer of the previous frame goes away, new rows and this frame's footer take its place.
         let footer = shift.footer;
         self.pixels.truncate((self.height() - footer) * self.width);
         let from = (frame.height - footer - shift.offset) * self.width;
@@ -176,7 +176,7 @@ impl Stitcher {
         Push::Added(shift.offset)
     }
 
-    /// Склеенная картинка. `flipped` - кадры переворачивали для прокрутки вверх.
+    /// Stitched image. `flipped` means the frames were flipped for scrolling up.
     pub fn image(&self, flipped: bool) -> Option<CFRetained<CGImage>> {
         let height = self.height();
         let mut pixels = if flipped {
@@ -185,7 +185,7 @@ impl Stitcher {
             self.pixels.clone()
         };
         let space = CGColorSpace::new_device_rgb();
-        // SAFETY: буфер на width * height пикселей по 4 байта живёт дольше контекста, а картинка копирует его.
+        // SAFETY: the buffer of width * height 4-byte pixels outlives the context, and the image copies it.
         let context = unsafe {
             CGBitmapContextCreate(
                 pixels.as_mut_ptr().cast(),
@@ -205,7 +205,7 @@ impl Stitcher {
 mod tests {
     use super::*;
 
-    /// Высокая «страница», где у каждой строки свой рисунок, с однотонными полями между абзацами.
+    /// Tall "page" where every row has its own pattern, with flat margins between paragraphs.
     fn page(width: usize, height: usize) -> Vec<u32> {
         (0..height)
             .flat_map(|y| {
@@ -220,7 +220,7 @@ mod tests {
             .collect()
     }
 
-    /// Окно высотой `height` на странице с позиции `top`, с закреплённой шапкой и подвалом.
+    /// Window of `height` on the page from position `top`, with a sticky header and footer.
     fn window(page: &[u32], width: usize, top: usize, height: usize, header: usize, footer: usize) -> Frame {
         let mut pixels = page[top * width..(top + height) * width].to_vec();
         pixels[..header * width].fill(0xff11_2233);
@@ -235,11 +235,11 @@ mod tests {
         let first = window(&page, width, 0, height, 10, 6);
         let second = window(&page, width, 37, height, 10, 6);
         let shift = find_shift(&rows(&first), &rows(&second), None).unwrap();
-        // над подвалом может оказаться совпавшая однотонная строка, она тоже считается подвалом
+        // a matching flat row may end up above the footer, it counts as footer too
         assert_eq!((shift.offset, shift.header), (37, 10));
         assert!(shift.footer >= 6);
         assert_eq!(find_shift(&rows(&first), &rows(&first), None).unwrap().offset, 0);
-        // кадр с другой страницы не совпадает
+        // a frame from another page does not match
         let other: Vec<u32> = page.iter().map(|p| p ^ 0x00ff_00ff).collect();
         assert_eq!(find_shift(&rows(&first), &rows(&window(&other, width, 300, height, 10, 6)), None), None);
     }
@@ -258,7 +258,7 @@ mod tests {
             pushes,
             [Push::Added(30), Push::Added(45), Push::Same, Push::Added(65), Push::Added(70), Push::Added(60)]
         );
-        // шапка, вся страница от её низа до низа последнего окна над подвалом, подвал
+        // header, the whole page from its bottom to the bottom of the last window above the footer, footer
         let total = 270 + height;
         assert_eq!(stitcher.height(), total);
         let pixels = &stitcher.pixels;
@@ -285,7 +285,7 @@ mod tests {
         let frame = |bytes: &[u8]| Frame::from_image(&crate::output::decode(bytes).unwrap().0).unwrap();
         let first = frame(include_bytes!("../tests/fixtures/scroll-1.png"));
         let second = frame(include_bytes!("../tests/fixtures/scroll-2.png"));
-        // 173 точки при масштабе 2. Шапка 50 точек и белые строки под ней одинаковы в обоих кадрах.
+        // 173 points at scale 2. The 50-point header and the white rows below it are the same in both frames.
         let shift = find_shift(&rows(&first), &rows(&second), None).unwrap();
         assert_eq!(shift.offset, 346);
         assert!(shift.header >= 100);
@@ -296,7 +296,7 @@ mod tests {
 
     #[test]
     fn hint_picks_the_expected_shift_on_repeating_content() {
-        // строки списка повторяются через 20 пикселей, сдвиг 30 неотличим от 10, 50 и 70
+        // list rows repeat every 20 pixels, a shift of 30 is indistinguishable from 10, 50 and 70
         let width = 8;
         let list: Vec<u32> =
             (0..400).flat_map(|y| (0..width).map(move |x| 0xff00_0000 | ((y % 20) * 31 + x) as u32)).collect();

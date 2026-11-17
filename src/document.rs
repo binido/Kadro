@@ -1,8 +1,8 @@
-//! Документ редактора: исходный снимок и правки над ним.
+//! Editor document: the original screenshot and the edits on top of it.
 //!
-//! Правки сводятся к состоянию: какая часть исходного снимка видна и в каком размере она выводится.
-//! Картинка на холсте и при экспорте каждый раз рисуется заново из исходного снимка и состояния,
-//! поэтому отмена и возврат обрезанного не теряют пикселей.
+//! Edits reduce to state: which part of the original is visible and at what size it is output.
+//! The canvas and the export are redrawn every time from the original and the state,
+//! so undoing and restoring a crop never loses pixels.
 
 use std::ptr;
 
@@ -16,7 +16,7 @@ use objc2_core_graphics::{
     CGInterpolationQuality,
 };
 
-/// Прямоугольник в пикселях, начало вверху слева.
+/// Rectangle in pixels, origin at the top left.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct PixelRect {
     pub x: f64,
@@ -35,24 +35,24 @@ impl PixelRect {
     }
 }
 
-/// Что видно и в каком размере.
+/// What is visible and at what size.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct State {
-    /// Видимая часть исходного снимка в его пикселях.
+    /// Visible part of the original screenshot in its pixels.
     pub crop: PixelRect,
-    /// Размер результата в пикселях.
+    /// Output size in pixels.
     pub width: f64,
     pub height: f64,
 }
 
 impl State {
-    /// Весь снимок в своём размере.
+    /// The whole screenshot at its own size.
     pub fn original(width: f64, height: f64) -> Self {
         State { crop: PixelRect::new(0.0, 0.0, width, height), width, height }
     }
 
-    /// Обрезает по прямоугольнику в пикселях текущего результата.
-    /// Края округляются до целых пикселей исходника, иначе экспорт размазал бы границу.
+    /// Crops to a rectangle in pixels of the current output.
+    /// Edges are rounded to whole source pixels, otherwise the export would blur the border.
     pub fn cropped(self, rect: PixelRect) -> Self {
         let sx = self.crop.width / self.width;
         let sy = self.crop.height / self.height;
@@ -64,7 +64,7 @@ impl State {
         State { crop, width: (crop.width / sx).round().max(1.0), height: (crop.height / sy).round().max(1.0) }
     }
 
-    /// Возвращает всё обрезанное, сохраняя текущую плотность пикселей результата.
+    /// Restores everything cropped, keeping the current output pixel density.
     pub fn uncropped(self, original_width: f64, original_height: f64) -> Self {
         let density = self.width / self.crop.width;
         State {
@@ -74,7 +74,7 @@ impl State {
         }
     }
 
-    /// Меняет ширину результата, высота следует пропорции.
+    /// Changes the output width, the height follows the aspect ratio.
     pub fn resized(self, width: f64) -> Self {
         let width = width.round().max(1.0);
         State { width, height: (width * self.height / self.width).round().max(1.0), ..self }
@@ -84,25 +84,25 @@ impl State {
         self.crop != PixelRect::new(0.0, 0.0, original_width, original_height)
     }
 
-    /// Переводит точку из пикселей результата в пиксели основы.
+    /// Converts a point from output pixels to base pixels.
     pub fn to_source(self, x: f64, y: f64) -> Point {
         Point::new(self.crop.x + x * self.crop.width / self.width, self.crop.y + y * self.crop.height / self.height)
     }
 }
 
-/// Документ целиком: что видно и в каком размере, какие аннотации и поверх какой основы.
-/// Основа меняется, только когда аннотации впечатывают в картинку.
+/// The whole document: what is visible and at what size, which annotations and over which base.
+/// The base changes only when annotations are flattened into the image.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Doc {
     pub state: State,
     pub annotations: Vec<Annotation>,
-    /// Номер основы в списке основ редактора. 0 - исходный снимок.
+    /// Base index in the editor base list. 0 is the original screenshot.
     pub base: usize,
-    /// Подложка под снимком. None - снимок как есть.
+    /// Backdrop under the screenshot. None means the screenshot as is.
     pub backdrop: Option<Backdrop>,
 }
 
-/// Отмена и повтор: список состояний и место текущего в нём.
+/// Undo and redo: a list of states and the position of the current one.
 pub struct History<T> {
     states: Vec<T>,
     current: usize,
@@ -117,7 +117,7 @@ impl<T: Clone + PartialEq> History<T> {
         &self.states[self.current]
     }
 
-    /// Новая правка. Отменённые после текущего состояния правки пропадают.
+    /// New edit. Undone edits after the current state are dropped.
     pub fn push(&mut self, state: T) {
         if &state == self.current() {
             return;
@@ -127,8 +127,8 @@ impl<T: Clone + PartialEq> History<T> {
         self.current += 1;
     }
 
-    /// Заменяет текущее состояние, не добавляя шаг отмены. Так ползунок, пока его тянут,
-    /// не заполняет историю промежуточными значениями.
+    /// Replaces the current state without adding an undo step. This way a slider being dragged
+    /// does not fill the history with intermediate values.
     pub fn amend(&mut self, state: T) {
         self.states.truncate(self.current + 1);
         self.states[self.current] = state;
@@ -159,10 +159,10 @@ impl<T: Clone + PartialEq> History<T> {
     }
 }
 
-/// Рисует результат: видимую часть основы, аннотации поверх неё и затем нужный размер.
-/// Без аннотаций и без изменения размера это просто вырезка, без перерисовки.
-/// `images` - основы и добавленные снимки, `scale` - пикселей снимка на точку, по нему толщина линий
-/// и кегль переводятся в пиксели. Аннотацию `hidden` рисует поверх холст, пока её тянут мышью.
+/// Draws the output: the visible part of the base, annotations on top and then the target size.
+/// Without annotations and resizing it is just a crop, without redrawing.
+/// `images` are bases and added screenshots, `scale` is screenshot pixels per point, it sets line widths
+/// and text size are converted to pixels. The canvas draws the `hidden` annotation on top while it is dragged.
 pub fn render(
     images: &[CFRetained<CGImage>],
     doc: &Doc,
@@ -190,7 +190,7 @@ pub fn render(
     CGBitmapContextCreateImage(Some(&context))
 }
 
-/// Результат с подложкой, если она есть, и где на нём лежит снимок.
+/// Output with the backdrop, if any, and where the screenshot sits on it.
 pub fn present(
     images: &[CFRetained<CGImage>],
     doc: &Doc,
@@ -207,17 +207,17 @@ pub fn present(
     }
 }
 
-/// Впечатывает аннотации в основу целиком, без обрезки и изменения размера.
+/// Flattens annotations into the whole base, without cropping or resizing.
 pub fn rasterize(images: &[CFRetained<CGImage>], doc: &Doc, scale: f64) -> Option<CFRetained<CGImage>> {
     let base = &images[doc.base];
     let (width, height) = (CGImage::width(Some(base)) as f64, CGImage::height(Some(base)) as f64);
     render(images, &Doc { state: State::original(width, height), ..doc.clone() }, None, scale)
 }
 
-/// 8-битный BGRA в цветовом пространстве основы.
+/// 8-bit BGRA in the base color space.
 fn bitmap(base: &CGImage, width: usize, height: usize) -> Option<CFRetained<CGContext>> {
     let space = CGImage::color_space(Some(base));
-    // SAFETY: буфер null - Core Graphics выделит его сам.
+    // SAFETY: a null buffer makes Core Graphics allocate it.
     unsafe {
         CGBitmapContextCreate(
             ptr::null_mut(),
@@ -239,12 +239,12 @@ mod tests {
     use crate::annotation::{Color, Size, Tool};
     use crate::output;
 
-    /// Картинка, где у каждого пикселя свой цвет, чтобы сдвиг на пиксель был заметен.
+    /// Image where every pixel has its own color, so a one-pixel shift is visible.
     fn pattern(width: usize, height: usize) -> CFRetained<CGImage> {
         let mut pixels: Vec<u32> =
             (0..width * height).map(|i| 0xff00_0000 | ((i as u32).wrapping_mul(2_654_435_761) >> 8)).collect();
         let space = CGColorSpace::new_device_rgb();
-        // SAFETY: буфер на width * height пикселей по 4 байта живёт до конца функции, а картинка копирует его.
+        // SAFETY: the buffer of width * height 4-byte pixels lives until the end of the function, and the image copies it.
         let context = unsafe {
             CGBitmapContextCreate(
                 pixels.as_mut_ptr().cast(),
@@ -264,7 +264,7 @@ mod tests {
         let (width, height) = (CGImage::width(Some(image)), CGImage::height(Some(image)));
         let mut pixels = vec![0u32; width * height];
         let space = CGColorSpace::new_device_rgb();
-        // SAFETY: буфер на width * height пикселей по 4 байта живёт дольше контекста.
+        // SAFETY: the buffer of width * height 4-byte pixels outlives the context.
         let context = unsafe {
             CGBitmapContextCreate(
                 pixels.as_mut_ptr().cast(),
@@ -308,18 +308,18 @@ mod tests {
     fn annotation_lands_on_its_source_pixels_inside_a_crop() {
         let source = pattern(64, 40);
         let state = State::original(64.0, 40.0).cropped(PixelRect::new(10.0, 10.0, 30.0, 20.0));
-        // линия толщиной 2 пикселя по y = 15 исходника, то есть по строкам 4 и 5 обрезки
+        // a 2-pixel line at source y = 15, which is rows 4 and 5 of the crop
         let mut line = Annotation::new(Tool::Line, Point::new(20.0, 15.0), Color::RED, Size::Small, 0);
         line.points[1] = Point::new(30.0, 15.0);
         let annotations = [line];
-        // Color::RED в 8 битах
+        // Color::RED in 8 bits
         let red = |p: u32| p & 0x00ff_ffff == 0x00ff_3b30;
 
         let images = [source.clone()];
         let drawn = pixels(&render(&images, &doc(state, annotations.to_vec()), None, 1.0).unwrap());
         let plain = pixels(&source);
         assert!(red(drawn[4 * 30 + 15]) && red(drawn[5 * 30 + 15]));
-        // остальное не тронуто
+        // the rest is untouched
         assert_eq!(drawn[8 * 30 + 15], plain[18 * 64 + 25]);
         assert_eq!(drawn[0], plain[10 * 64 + 10]);
 
@@ -329,10 +329,10 @@ mod tests {
 
     #[test]
     fn crop_maps_through_an_earlier_resize_to_whole_source_pixels() {
-        // снимок 1000×600, уменьшен вдвое до 500×300
+        // 1000x600 screenshot, scaled down by half to 500x300
         let half = State::original(1000.0, 600.0).resized(500.0);
         assert_eq!((half.width, half.height), (500.0, 300.0));
-        // обрезка 100×50 от точки (10, 20) в результате - это 200×100 от (20, 40) в исходнике
+        // a 100x50 crop at (10, 20) in the output is 200x100 at (20, 40) in the source
         let cropped = half.cropped(PixelRect::new(10.0, 20.0, 100.0, 50.0));
         assert_eq!(cropped.crop, PixelRect::new(20.0, 40.0, 200.0, 100.0));
         assert_eq!((cropped.width, cropped.height), (100.0, 50.0));
@@ -365,15 +365,15 @@ mod tests {
         assert!(history.redo());
         assert_eq!(*history.current(), b);
         history.undo();
-        // новая правка после отмены забывает отменённую
+        // a new edit after undo forgets the undone one
         history.push(c);
         assert!(!history.can_redo());
         assert_eq!(*history.current(), c);
-        // правка без изменений не попадает в историю
+        // an edit without changes does not enter the history
         history.push(c);
         assert!(history.undo());
         assert_eq!(*history.current(), a);
-        // поправка заменяет текущее состояние без нового шага
+        // an amend replaces the current state without a new step
         history.redo();
         history.amend(b);
         assert_eq!(*history.current(), b);

@@ -9,13 +9,13 @@ permissions:
 
 jobs:
   release:
-    # macos-26 работает на Apple Silicon, поэтому сборка получается только под arm64.
-    # От SDK образа зависит оформление. Со старым SDK macOS 26+ рисует окна в прежнем стиле.
+    # macos-26 runs on Apple Silicon, so the build is arm64 only.
+    # The image SDK decides the look. With an older SDK macOS 26+ draws windows in the old style.
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
-      # Версия из Cargo.toml попадает в Info.plist, тег должен с ней совпадать.
+      # The version from Cargo.toml goes into Info.plist, the tag must match it.
       - name: Check tag matches Cargo.toml version
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
@@ -38,7 +38,7 @@ jobs:
       - name: Check architecture
         run: test "$(lipo -archs build/Kadro.app/Contents/MacOS/Kadro)" = arm64
 
-      # Установщик - образ диска, где Kadro.app перетаскивают на ярлык Программ.
+      # The installer is a disk image where Kadro.app is dragged onto the Applications shortcut.
       - name: Build installer
         run: |
           mkdir -p build/dmg

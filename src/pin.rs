@@ -1,4 +1,4 @@
-//! Закреплённые снимки: плавающие окна поверх остальных, которые можно двигать и масштабировать.
+//! Pinned screenshots: floating windows above the rest that can be moved and zoomed.
 
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
@@ -24,7 +24,7 @@ const TRANSLUCENT_ALPHA: f64 = 0.5;
 
 thread_local! {
     static PINS: RefCell<Vec<Retained<PinPanel>>> = const { RefCell::new(Vec::new()) };
-    // Где был последний снимок, чтобы закрепить его на том же месте.
+    // Where the last screenshot was, to pin it in the same place.
     static LAST_SHOT: RefCell<Option<Shot>> = const { RefCell::new(None) };
 }
 
@@ -34,7 +34,7 @@ define_class!(
     struct PinPanel;
 
     impl PinPanel {
-        // Окно без рамки по умолчанию не получает клавиатуру, а без неё не работают Esc и ⌘C.
+        // A borderless window gets no keyboard by default, and Esc and ⌘C do not work without it.
         #[unsafe(method(canBecomeKeyWindow))]
         fn can_become_key_window(&self) -> bool {
             true
@@ -44,7 +44,7 @@ define_class!(
 
 struct PinIvars {
     image: CFRetained<CGImage>,
-    /// Пикселей снимка на точку экрана, где его сняли.
+    /// Screenshot pixels per point of the screen it was captured on.
     scale: f64,
     zoom: Cell<f64>,
     translucent: Cell<bool>,
@@ -78,7 +78,7 @@ define_class!(
             NSBezierPath::strokeRect(bounds);
         }
 
-        // Двойной клик закрывает, одиночный тянет окно за любое место.
+        // A double click closes, a single click drags the window by any point.
         #[unsafe(method(mouseDown:))]
         fn mouse_down(&self, event: &NSEvent) {
             if event.clickCount() == 2 {
@@ -183,7 +183,7 @@ impl PinView {
         item.setState(if checked { NSControlStateValueOn } else { NSControlStateValueOff });
     }
 
-    /// Размер окна в точках: один пиксель снимка на пиксель экрана, умноженный на масштаб.
+    /// Window size in points: one screenshot pixel per screen pixel, multiplied by the zoom.
     fn size_on(&self, screen_scale: f64) -> NSSize {
         let image = &self.ivars().image;
         let zoom = self.ivars().zoom.get();
@@ -193,7 +193,7 @@ impl PinView {
         )
     }
 
-    /// Меняет размер окна, оставляя на месте его левый верхний угол.
+    /// Resizes the window, keeping its top left corner in place.
     fn apply_zoom(&self) {
         let Some(window) = self.window() else { return };
         let frame = window.frame();
@@ -203,7 +203,7 @@ impl PinView {
     }
 }
 
-/// Закрепляет снимок поверх окон. Если известно, где его сняли, окно встаёт ровно туда.
+/// Pins a screenshot above windows. If it is known where it was captured, the window goes exactly there.
 pub fn open(mtm: MainThreadMarker, image: CFRetained<CGImage>, scale: f64, place: Option<NSRect>) {
     let screens = NSScreen::screens(mtm);
     let cocoa_place = place.map(|r| preview::to_cocoa(mtm, r));
@@ -220,7 +220,7 @@ pub fn open(mtm: MainThreadMarker, image: CFRetained<CGImage>, scale: f64, place
     let view: Retained<PinView> = unsafe { msg_send![super(view), initWithFrame: NSRect::ZERO] };
     let size = view.size_on(screen.backingScaleFactor());
     let origin = match cocoa_place {
-        // Левый верхний угол там же, где был у снятой области.
+        // Top left corner where it was in the captured area.
         Some(r) => NSPoint::new(r.origin.x, r.origin.y + r.size.height - size.height),
         None => {
             let visible = screen.visibleFrame();
@@ -242,7 +242,7 @@ pub fn open(mtm: MainThreadMarker, image: CFRetained<CGImage>, scale: f64, place
         ]
     };
     preview::configure_floating(&panel);
-    // Клик по закреплённому снимку делает его ключевым, иначе Esc и ⌘C до него не дойдут.
+    // A click on a pinned screenshot makes it key, otherwise Esc and ⌘C would not reach it.
     panel.setBecomesKeyOnlyIfNeeded(false);
     view.setFrame(NSRect::new(NSPoint::ZERO, size));
     panel.setContentView(Some(&view));
@@ -251,14 +251,14 @@ pub fn open(mtm: MainThreadMarker, image: CFRetained<CGImage>, scale: f64, place
     PINS.with_borrow_mut(|pins| pins.push(panel));
 }
 
-/// Где лежит последний снимок для "Pin Last Screenshot".
+/// Where the last screenshot is stored for "Pin Last Screenshot".
 fn last_path() -> PathBuf {
     std::env::temp_dir().join("Kadro").join("last.png")
 }
 
-/// Запоминает последний снимок на диске, а не в памяти, чтобы Kadro в простое не держал десятки мегабайт.
+/// Stores the last screenshot on disk rather than in memory, so an idle Kadro does not hold tens of megabytes.
 pub fn remember(image: &CGImage, scale: f64, png: Option<&[u8]>) {
-    // PNG для буфера обмена уже готов, кодировать второй раз незачем.
+    // The clipboard PNG is ready, no need to encode it twice.
     let Some(bytes) = png.map(Cow::Borrowed).or_else(|| output::encode_png(image, scale).map(Cow::Owned)) else {
         return;
     };
@@ -273,12 +273,12 @@ pub fn remember_place(shot: Shot) {
     LAST_SHOT.set(Some(shot));
 }
 
-/// Где и как сделан последний снимок, если он был в этом запуске.
+/// Where and how the last screenshot was taken, if there was one in this launch.
 pub fn last_shot() -> Option<Shot> {
     LAST_SHOT.with_borrow(Clone::clone)
 }
 
-/// Закрепляет последний снимок. Если снимков ещё не было, только сигналит.
+/// Pins the last screenshot. If there are no screenshots yet, only beeps.
 pub fn pin_last(mtm: MainThreadMarker) {
     match load_last() {
         Some((image, scale)) => {

@@ -1,11 +1,11 @@
-//! Подпись запросов к S3-совместимому хранилищу по AWS Signature Version 4.
+//! Signing requests to S3-compatible storage with AWS Signature Version 4.
 //!
-//! SHA-256 и HMAC берутся из CommonCrypto, так что ни SDK, ни крипто-библиотеки не нужны.
+//! SHA-256 and HMAC come from CommonCrypto, so no SDK or crypto library is needed.
 
 use std::ffi::c_void;
 use std::fmt::Write;
 
-/// Тело, которое не подписывается: так подписаны ссылки с ограниченным сроком.
+/// Unsigned body marker, used for links with a limited lifetime.
 pub const UNSIGNED_PAYLOAD: &str = "UNSIGNED-PAYLOAD";
 
 unsafe extern "C" {
@@ -18,14 +18,14 @@ const HMAC_SHA256: u32 = 2;
 
 pub fn sha256(data: &[u8]) -> [u8; 32] {
     let mut digest = [0u8; 32];
-    // SAFETY: буфер на 32 байта - ровно размер SHA-256, данные живут до конца вызова.
+    // SAFETY: the 32-byte buffer is exactly the SHA-256 size, the data lives until the end of the call.
     unsafe { CC_SHA256(data.as_ptr().cast(), data.len() as u32, digest.as_mut_ptr()) };
     digest
 }
 
 fn hmac(key: &[u8], data: &[u8]) -> [u8; 32] {
     let mut out = [0u8; 32];
-    // SAFETY: ключ и данные живут до конца вызова, выход - 32 байта HMAC-SHA256.
+    // SAFETY: the key and data live until the end of the call, the output is 32 bytes of HMAC-SHA256.
     unsafe { CCHmac(HMAC_SHA256, key.as_ptr().cast(), key.len(), data.as_ptr().cast(), data.len(), out.as_mut_ptr()) };
     out
 }
@@ -34,7 +34,7 @@ pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Кодирование URI по правилам S3: всё, кроме букв, цифр и `-._~`, а для пути ещё и `/`.
+/// URI encoding by S3 rules: everything except letters, digits and `-._~`, and for a path also `/`.
 pub fn encode(text: &str, keep_slash: bool) -> String {
     let mut out = String::new();
     for byte in text.bytes() {
@@ -48,14 +48,14 @@ pub fn encode(text: &str, keep_slash: bool) -> String {
     out
 }
 
-/// Ключи доступа и область подписи.
+/// Access keys and signing scope.
 pub struct Credentials<'a> {
     pub access_key: &'a str,
     pub secret_key: &'a str,
     pub region: &'a str,
 }
 
-/// Время запроса: `YYYYMMDDTHHMMSSZ`.
+/// Request time: `YYYYMMDDTHHMMSSZ`.
 #[derive(Clone, Copy)]
 pub struct Stamp<'a>(pub &'a str);
 
@@ -65,11 +65,11 @@ impl Stamp<'_> {
     }
 }
 
-/// Время в формате подписи из секунд Unix.
+/// Time in signing format from Unix seconds.
 pub fn stamp(unix: u64) -> String {
     let days = (unix / 86_400) as i64;
     let seconds = unix % 86_400;
-    // Дни от 1970-01-01 в дату, алгоритм Говарда Хиннанта.
+    // Days since 1970-01-01 to a date, Howard Hinnant's algorithm.
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
     let day_of_era = z - era * 146_097;
@@ -86,8 +86,8 @@ fn scope(credentials: &Credentials, stamp: Stamp) -> String {
     format!("{}/{}/s3/aws4_request", stamp.date(), credentials.region)
 }
 
-/// Подпись канонического запроса. `headers` - имена в нижнем регистре и значения,
-/// `query` - параметры без кодирования, `path` - путь без кодирования.
+/// Signature of the canonical request. `headers` are lowercase names and values,
+/// `query` holds unencoded parameters, `path` is the unencoded path.
 fn signature(
     credentials: &Credentials,
     stamp: Stamp,
@@ -114,7 +114,7 @@ fn signature(
     (hex(&hmac(&key, to_sign.as_bytes())), signed_headers)
 }
 
-/// Заголовок Authorization для запроса с подписанными заголовками.
+/// Authorization header for a request with signed headers.
 pub fn authorization(
     credentials: &Credentials,
     stamp: Stamp,
@@ -131,7 +131,7 @@ pub fn authorization(
     )
 }
 
-/// Строка запроса ссылки на GET, которая работает `expires` секунд. Подписан только заголовок host.
+/// Query string for a GET link that works for `expires` seconds. Only the host header is signed.
 pub fn presigned_query(credentials: &Credentials, stamp: Stamp, host: &str, path: &str, expires: u64) -> String {
     let credential = format!("{}/{}", credentials.access_key, scope(credentials, stamp));
     let query = [
@@ -152,8 +152,8 @@ pub fn presigned_query(credentials: &Credentials, stamp: Stamp, host: &str, path
 mod tests {
     use super::*;
 
-    // Примеры из документации Amazon S3 «Signature Calculations for the Authorization Header»
-    // и «Authenticating Requests: Using Query Parameters».
+    // Examples from the Amazon S3 docs "Signature Calculations for the Authorization Header"
+    // and "Authenticating Requests: Using Query Parameters".
     const EXAMPLE: Credentials = Credentials {
         access_key: "AKIAIOSFODNN7EXAMPLE",
         secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
@@ -213,7 +213,7 @@ mod tests {
     fn unix_time_becomes_the_signing_stamp() {
         assert_eq!(stamp(1_369_353_600), "20130524T000000Z");
         assert_eq!(stamp(0), "19700101T000000Z");
-        // 29 февраля високосного года и конец дня
+        // February 29 of a leap year and the end of the day
         assert_eq!(stamp(1_709_251_199), "20240229T235959Z");
     }
 

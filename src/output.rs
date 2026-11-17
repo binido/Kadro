@@ -1,4 +1,4 @@
-//! Что происходит со снимком после захвата: буфер обмена, файл и метаданные Finder.
+//! What happens to a screenshot after capture: clipboard, file and Finder metadata.
 
 use std::collections::HashSet;
 use std::ffi::{CString, c_char, c_int, c_void};
@@ -44,32 +44,32 @@ unsafe extern "C" {
     ) -> c_int;
 }
 
-/// Куда идёт следующий снимок области вместо обычного вывода.
+/// Where the next area screenshot goes instead of the usual output.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Route {
     Normal,
-    /// На холст редактора, который его ждёт.
+    /// To the canvas of the editor waiting for it.
     Editor,
-    /// Только в распознавание текста.
+    /// To text recognition only.
     Text,
-    /// Выделенная область прокручивается и склеивается, а не снимается сразу.
+    /// The selected area is scrolled and stitched instead of captured right away.
     Scroll,
 }
 
-/// Маршрут следующего снимка. Ставится на главном потоке, читается в потоке захвата.
+/// Route of the next screenshot. Set on the main thread, read on the capture thread.
 static ROUTE: AtomicU8 = AtomicU8::new(0);
 
-/// Направляет следующий снимок области мимо буфера обмена, файла и превью.
+/// Sends the next area screenshot past the clipboard, file and preview.
 pub fn route_next(route: Route) {
     ROUTE.store(route as u8, Ordering::SeqCst);
 }
 
-/// Выделение отменили, следующий снимок идёт обычным путём.
+/// The selection was cancelled, the next screenshot goes the usual way.
 pub fn cancel_route() {
     route_next(Route::Normal);
 }
 
-/// Забирает маршрут прокрутки, если выделение было для неё. Другие маршруты остаются на месте.
+/// Takes the scroll route if the selection was for it. Other routes stay in place.
 pub fn take_scroll_route() -> bool {
     ROUTE.compare_exchange(Route::Scroll as u8, Route::Normal as u8, Ordering::SeqCst, Ordering::SeqCst).is_ok()
 }
@@ -83,12 +83,12 @@ fn take_route() -> Route {
     }
 }
 
-/// Отдаёт снимок: подкладывает фон за окном, если он выбран, затем копирует, сохраняет и показывает.
+/// Delivers a screenshot: adds the background behind a window if one is chosen, then copies, saves and shows it.
 pub fn deliver(image: &CGImage, scale: f64, shot: &Shot) {
-    // Окно снимается в кадр с запасом, пустое поле вокруг него лишнее во всех режимах.
+    // The window is captured with a margin, the empty space around it is unwanted in every mode.
     let cropped = if shot.kind == Kind::Window { backdrop::crop_transparent(image) } else { None };
     let image = cropped.as_deref().unwrap_or(image);
-    // Снимок для редактора или распознавания не копируется, не сохраняется и не становится последним.
+    // A screenshot for the editor or text recognition is not copied, saved or made the last one.
     match take_route() {
         Route::Editor => {
             let image = retain(image);
@@ -100,7 +100,7 @@ pub fn deliver(image: &CGImage, scale: f64, shot: &Shot) {
     let settings = Settings::load();
     let background = settings.window_background;
     if shot.kind == Kind::Window && matches!(background, WindowBackground::Wallpaper | WindowBackground::Color) {
-        // Обои экрана узнаются на главном потоке, а рисование и вывод снова уходят в фон.
+        // The screen wallpaper is looked up on the main thread, drawing and output go back to the background.
         let (image, shot, color) = (retain(image), shot.clone(), settings.window_color);
         return DispatchQueue::main().exec_async(move || {
             let Some(mtm) = MainThreadMarker::new() else { return };
@@ -113,14 +113,14 @@ pub fn deliver(image: &CGImage, scale: f64, shot: &Shot) {
         });
     }
     if shot.kind == Kind::Window && background == WindowBackground::Clean {
-        // С прозрачными углами снимок на светлом фоне получает белые клинья вокруг скруглений.
+        // With transparent corners a screenshot on a light background gets white wedges around the rounding.
         let squared = backdrop::square_corners(image, scale);
         return finish(squared.as_deref().unwrap_or(image), scale, shot);
     }
     finish(image, scale, shot);
 }
 
-/// Копирует и сохраняет готовый снимок, затем показывает превью или подтверждение.
+/// Copies and saves the finished screenshot, then shows the preview or a confirmation.
 fn finish(image: &CGImage, scale: f64, shot: &Shot) {
     let settings = Settings::load();
     let png = if settings.copy_to_clipboard { copy(image, scale) } else { None };
@@ -149,32 +149,32 @@ fn finish(image: &CGImage, scale: f64, shot: &Shot) {
     });
 }
 
-/// Выполняет работу с файлами и кодированием вне главного потока, чтобы интерфейс не замирал.
+/// Runs file work and encoding off the main thread so the interface does not freeze.
 pub fn in_background(work: impl FnOnce() + Send + 'static) {
     DispatchQueue::global_queue(GlobalQueueIdentifier::QualityOfService(DispatchQoS::UserInitiated)).exec_async(work);
 }
 
-/// Кодирует и кладёт снимок в буфер обмена в фоне.
+/// Encodes the screenshot and puts it on the clipboard in the background.
 pub fn copy_in_background(image: CFRetained<CGImage>, scale: f64) {
     in_background(move || {
         copy(&image, scale);
     });
 }
 
-/// Кладёт снимок в буфер обмена как PNG. Возвращает закодированные байты, чтобы их не кодировать второй раз.
+/// Puts the screenshot on the clipboard as PNG. Returns the encoded bytes so they are not encoded twice.
 pub fn copy(image: &CGImage, scale: f64) -> Option<Vec<u8>> {
     let Some(png) = encode(image, Format::Png, scale) else {
         eprintln!("kadro: failed to encode clipboard image");
         return None;
     };
     let bytes = png.clone();
-    // NSPasteboard безопасен только на главном потоке.
+    // NSPasteboard is safe only on the main thread.
     DispatchQueue::main().exec_async(move || copy_to_clipboard(&bytes));
     Some(png)
 }
 
-/// Сохраняет снимок в папку по настройкам формата, уменьшения и шаблона имени.
-/// Без `shot` - картинка открыта из файла или буфера, а не снята, и метки снимка экрана ей не ставятся.
+/// Saves the screenshot to the folder per the format, downscale and file name template settings.
+/// Without `shot` the image was opened from a file or the clipboard rather than captured, and gets no screenshot tags.
 pub fn save(
     directory: &Path,
     image: &CGImage,
@@ -193,8 +193,8 @@ pub fn save(
     Ok(path)
 }
 
-/// Снимок в формате из настроек и имя файла без расширения по шаблону.
-/// `png` - уже закодированный PNG, если он есть.
+/// Screenshot in the format from settings and the file name from the template, without extension.
+/// `png` is the already encoded PNG, if there is one.
 pub fn encoded(
     image: &CGImage,
     scale: f64,
@@ -209,7 +209,7 @@ pub fn encoded(
         format => format,
     };
     let bytes = match (&downscaled, png) {
-        // Тот же снимок в том же формате уже закодирован для буфера обмена.
+        // The same screenshot in the same format is already encoded for the clipboard.
         (None, Some(png)) if format == Format::Png => Some(png.to_vec()),
         (Some(small), _) => encode(small, format, 1.0),
         (None, _) => encode(image, format, scale),
@@ -220,7 +220,7 @@ pub fn encoded(
     Ok((bytes, file_name(&settings.file_name_template, &date, &time, mode, app), format))
 }
 
-/// Записывает картинку в выбранный путь. Формат берётся из расширения, незнакомое расширение - ошибка.
+/// Writes the image to the chosen path. The format comes from the extension, an unknown extension is an error.
 pub fn write_to(path: &Path, image: &CGImage, scale: f64) -> std::io::Result<()> {
     let extension = path.extension().and_then(|e| e.to_str()).unwrap_or_default().to_lowercase();
     let format = match extension.as_str() {
@@ -233,14 +233,14 @@ pub fn write_to(path: &Path, image: &CGImage, scale: f64) -> std::io::Result<()>
     std::fs::write(path, bytes)
 }
 
-/// Разбирает картинку и её масштаб из DPI. Без DPI считается, что пиксель равен точке.
+/// Decodes an image and its scale from DPI. Without DPI a pixel is assumed to equal a point.
 pub fn decode(bytes: &[u8]) -> Option<(CFRetained<CGImage>, f64)> {
     let source = unsafe { CGImageSource::with_data(&CFData::from_bytes(bytes), None) }?;
     let image = unsafe { source.image_at_index(0, None) }?;
     let dpi = unsafe { source.properties_at_index(0, None) }.and_then(|properties| {
-        // SAFETY: свойства изображения - словарь со строковыми ключами, CFDictionary и NSDictionary взаимозаменяемы.
+        // SAFETY: image properties are a dictionary with string keys, CFDictionary and NSDictionary are toll-free bridged.
         let properties: &NSDictionary<NSString, AnyObject> = unsafe { bridge::toll_free(&*properties) };
-        // SAFETY: ключ - константа ImageIO типа CFString, а CFString и NSString взаимозаменяемы.
+        // SAFETY: the key is an ImageIO CFString constant, and CFString and NSString are toll-free bridged.
         let key: &NSString = unsafe { bridge::toll_free(kCGImagePropertyDPIWidth) };
         bridge::number(properties, key).map(|n| n.doubleValue())
     });
@@ -255,12 +255,12 @@ pub fn retain(image: &CGImage) -> CFRetained<CGImage> {
     unsafe { CFRetained::retain(std::ptr::NonNull::from(image)) }
 }
 
-/// Кодирует снимок в байты выбранного формата.
+/// Encodes the screenshot to bytes of the chosen format.
 fn encode(image: &CGImage, format: Format, scale: f64) -> Option<Vec<u8>> {
     let data = CFMutableData::new(None, 0)?;
     let destination =
         unsafe { CGImageDestination::with_data(&data, &CFString::from_static_str(format.uti()), 1, None) }?;
-    // DPI 144 у Retina-снимка - чтобы Preview и браузеры показывали его в размере точек, а не пикселей.
+    // DPI 144 on a Retina screenshot makes Preview and browsers show it at point size, not pixel size.
     let dpi = CFNumber::new_f64(72.0 * scale);
     let quality = CFNumber::new_f64(0.9);
     let keys =
@@ -270,19 +270,19 @@ fn encode(image: &CGImage, format: Format, scale: f64) -> Option<Vec<u8>> {
     unsafe { destination.finalize() }.then(|| data.to_vec())
 }
 
-/// Анимированный GIF из кадров, которые сменяют друг друга по кругу через `seconds`.
+/// Animated GIF of frames that loop, switching every `seconds`.
 pub fn encode_gif(frames: &[&CGImage], seconds: f64) -> Option<Vec<u8>> {
     let data = CFMutableData::new(None, 0)?;
     let gif = CFString::from_static_str("com.compuserve.gif");
     let destination = unsafe { CGImageDestination::with_data(&data, &gif, frames.len(), None) }?;
-    // SAFETY: ключи - константы ImageIO, они живут весь процесс.
+    // SAFETY: the keys are ImageIO constants, they live for the whole process.
     let (dictionary, loop_count, delay) =
         unsafe { (kCGImagePropertyGIFDictionary, kCGImagePropertyGIFLoopCount, kCGImagePropertyGIFDelayTime) };
     let gif_properties = |key: &CFString, value: &CFNumber| {
         let inner = CFDictionary::<CFString, CFNumber>::from_slices(&[key], &[value]);
         CFDictionary::<CFString, CFDictionary<CFString, CFNumber>>::from_slices(&[dictionary], &[&inner])
     };
-    // 0 повторов означает бесконечный круг.
+    // 0 repeats means an endless loop.
     unsafe { destination.set_properties(Some(gif_properties(loop_count, &CFNumber::new_i32(0)).as_ref())) };
     let frame = gif_properties(delay, &CFNumber::new_f64(seconds));
     for image in frames {
@@ -291,7 +291,7 @@ pub fn encode_gif(frames: &[&CGImage], seconds: f64) -> Option<Vec<u8>> {
     unsafe { destination.finalize() }.then(|| data.to_vec())
 }
 
-/// Уменьшает снимок до размера в точках. Возвращает None, если контекст не создался.
+/// Scales the screenshot down to a size in points. Returns None if the context could not be created.
 fn downscale(image: &CGImage, scale: f64) -> Option<CFRetained<CGImage>> {
     let width = (CGImage::width(Some(image)) as f64 / scale).round() as usize;
     let height = (CGImage::height(Some(image)) as f64 / scale).round() as usize;
@@ -325,7 +325,7 @@ fn now(format: &str) -> String {
     formatter.stringFromDate(&NSDate::now()).to_string()
 }
 
-/// Имя файла по шаблону с подстановками {date}, {time}, {mode} и {app}.
+/// File name from the template with {date}, {time}, {mode} and {app} placeholders.
 fn file_name(template: &str, date: &str, time: &str, mode: &str, app: &str) -> String {
     let render = |template: &str| {
         template
@@ -333,17 +333,17 @@ fn file_name(template: &str, date: &str, time: &str, mode: &str, app: &str) -> S
             .replace("{time}", time)
             .replace("{mode}", mode)
             .replace("{app}", app)
-            // "/" делит путь, а ":" Finder показывает как "/".
+            // "/" splits the path, and Finder shows ":" as "/".
             .replace(['/', ':'], "-")
             .trim()
             .to_string()
     };
     let name = render(template);
-    // Имя из одних пробелов или начинающееся с точки Finder спрячет или не сохранит.
+    // Finder hides or refuses a name of only spaces or one that starts with a dot.
     if name.is_empty() || name.starts_with('.') { render(DEFAULT_FILE_NAME_TEMPLATE) } else { name }
 }
 
-/// Подбирает свободное имя файла, добавляя номер при совпадении.
+/// Picks a free file name, adding a number on collision.
 fn unique_path(directory: &Path, name: &str, extension: &str) -> PathBuf {
     let mut path = directory.join(format!("{name}.{extension}"));
     let mut n = 2;
@@ -354,8 +354,8 @@ fn unique_path(directory: &Path, name: &str, extension: &str) -> PathBuf {
     path
 }
 
-/// Помечает файл как снимок экрана, как это делает системный screencapture,
-/// чтобы Finder и Spotlight находили его среди снимков. Ошибки только логируются.
+/// Marks the file as a screenshot, like the system screencapture does,
+/// so Finder and Spotlight find it among screenshots. Errors are only logged.
 fn mark_as_screenshot(path: &Path, shot: &Shot) {
     let r = shot.global_rect;
     let rect = NSArray::from_retained_slice(&[
@@ -387,7 +387,7 @@ fn mark_as_screenshot(path: &Path, shot: &Shot) {
     }
 }
 
-/// Похож ли снимок на фото или градиент, которым лучше подходит JPEG.
+/// Whether the screenshot looks like a photo or a gradient that suits JPEG better.
 fn looks_like_photo(image: &CGImage) -> bool {
     const SIDE: usize = 160;
     let (width, height) = (CGImage::width(Some(image)), CGImage::height(Some(image)));
@@ -408,14 +408,14 @@ fn looks_like_photo(image: &CGImage) -> bool {
     }) else {
         return false;
     };
-    // Без сглаживания: смешивание пикселей при уменьшении даёт лишние цвета даже у текста.
+    // No smoothing: blending pixels while scaling down adds extra colors even to text.
     CGContext::set_interpolation_quality(Some(&context), CGInterpolationQuality::None);
     CGContext::draw_image(Some(&context), CGRect::new(CGPoint::ZERO, CGSize::new(w as f64, h as f64)), Some(image));
     drop(context);
     is_photographic(&pixels)
 }
 
-/// У интерфейса и текста немного разных цветов, у фото и шума почти каждый пиксель свой.
+/// Interfaces and text have few distinct colors, in photos and noise almost every pixel is unique.
 fn is_photographic(pixels: &[u32]) -> bool {
     let unique: HashSet<_> = pixels.iter().map(|p| p & 0x00ff_ffff).collect();
     unique.len() * 4 > pixels.len()
@@ -446,7 +446,7 @@ mod tests {
             file_name("Kadro {date} at {time}", "2026-11-03", "14.12.00", "Window", ""),
             "Kadro 2026-11-03 at 14.12.00"
         );
-        // пустое приложение даёт пустое имя
+        // an empty app gives an empty name
         assert_eq!(file_name("{app}", "d", "t", "Window", ""), "Kadro d at t");
         assert_eq!(file_name(".hidden", "d", "t", "Window", ""), "Kadro d at t");
     }
@@ -455,7 +455,7 @@ mod tests {
     fn gif_has_both_frames_and_loops_forever() {
         let space = CGColorSpace::new_device_rgb();
         let frame = |gray: f64| {
-            // SAFETY: буфер null - Core Graphics выделит его сам.
+            // SAFETY: a null buffer makes Core Graphics allocate it.
             let context = unsafe {
                 CGBitmapContextCreate(
                     std::ptr::null_mut(),
@@ -474,14 +474,14 @@ mod tests {
         };
         let (dark, light) = (frame(0.1), frame(0.9));
         let gif = encode_gif(&[&dark, &light], 1.0).unwrap();
-        // ImageIO пишет заголовок GIF87a, но расширения повтора и задержки на месте
+        // ImageIO writes a GIF87a header, but the loop and delay extensions are in place
         assert_eq!(&gif[..3], b"GIF");
         let source = unsafe { CGImageSource::with_data(&CFData::from_bytes(&gif), None) }.unwrap();
         assert_eq!(unsafe { source.count() }, 2);
-        // NETSCAPE2.0 с нулём повторов - бесконечный круг, как его понимают Safari и Preview
+        // NETSCAPE2.0 with zero repeats is an endless loop, as Safari and Preview read it
         let netscape = gif.windows(11).position(|w| w == b"NETSCAPE2.0").expect("loop extension");
         assert_eq!(&gif[netscape + 13..netscape + 15], &[0, 0]);
-        // у каждого кадра задержка 100 сотых секунды
+        // every frame has a delay of 100 hundredths of a second
         let delays = gif.windows(6).filter(|w| w[..3] == [0x21, 0xf9, 0x04] && w[4..] == [100, 0]).count();
         assert_eq!(delays, 2);
     }
@@ -489,7 +489,7 @@ mod tests {
     #[test]
     fn write_to_picks_the_format_from_the_extension() {
         let space = CGColorSpace::new_device_rgb();
-        // SAFETY: буфер null - Core Graphics выделит его сам.
+        // SAFETY: a null buffer makes Core Graphics allocate it.
         let context = unsafe {
             CGBitmapContextCreate(
                 std::ptr::null_mut(),
@@ -516,7 +516,7 @@ mod tests {
     fn flat_interface_is_png_and_noise_is_photo() {
         let interface: Vec<u32> = (0..25_600).map(|i| [0xffffff, 0x1e1e1e, 0x3478f6, 0x888888][i % 4]).collect();
         assert!(!is_photographic(&interface));
-        // плавный горизонтальный градиент - один цвет на столбец
+        // smooth horizontal gradient, one color per column
         let gradient: Vec<u32> = (0..25_600u32).map(|i| (i % 160) * 0x010101).collect();
         assert!(!is_photographic(&gradient));
         let mut seed = 1u32;

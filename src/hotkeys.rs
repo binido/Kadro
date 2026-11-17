@@ -1,6 +1,6 @@
-//! Глобальные сочетания клавиш через Carbon `RegisterEventHotKey`.
+//! Global keyboard shortcuts through Carbon `RegisterEventHotKey`.
 //!
-//! Сочетания хранятся в `NSUserDefaults` и регистрируются заново после каждого изменения в настройках.
+//! Shortcuts are stored in `NSUserDefaults` and registered again after every change in settings.
 
 use std::cell::RefCell;
 use std::ffi::c_void;
@@ -17,7 +17,7 @@ use crate::{browser, capture, editor, output, overlay, pin, settings, upload};
 
 type OSStatus = i32;
 
-/// `noErr` из Carbon: вызов прошёл успешно.
+/// Carbon `noErr`, the call succeeded.
 const NO_ERR: OSStatus = 0;
 
 #[repr(C)]
@@ -67,7 +67,7 @@ unsafe extern "C" {
     fn CopySymbolicHotKeys(out: *mut *const CFArray) -> OSStatus;
 }
 
-/// Четырёхбуквенный код Carbon, как `'KDRO'` в C.
+/// Four-character Carbon code, like `'KDRO'` in C.
 const fn four_cc(code: [u8; 4]) -> u32 {
     u32::from_be_bytes(code)
 }
@@ -77,16 +77,16 @@ const KEYBOARD_EVENT_CLASS: u32 = four_cc(*b"keyb");
 const HOT_KEY_PRESSED: u32 = 5;
 const DIRECT_OBJECT_PARAM: u32 = four_cc(*b"----");
 const HOT_KEY_ID_TYPE: u32 = four_cc(*b"hkid");
-// С этим флагом регистрация падает, если сочетание уже занято другим приложением.
+// With this flag registration fails if another app already uses the shortcut.
 const EXCLUSIVE: u32 = 1;
 
-// Модификаторы в формате Carbon, в нём же macOS отдаёт системные сочетания.
+// Modifiers in Carbon format, the same format macOS uses for system shortcuts.
 const CMD: u32 = 0x100;
 const SHIFT: u32 = 0x200;
 const OPTION: u32 = 0x800;
 const CONTROL: u32 = 0x1000;
 
-/// Коды клавиш по раскладке ANSI. Буквы показываются латиницей при любой раскладке, как в самой macOS.
+/// ANSI layout key codes. Letters are shown in Latin with any layout, like macOS itself does.
 #[rustfmt::skip]
 const KEYS: &[(u32, &str)] = &[
     (0, "A"), (1, "S"), (2, "D"), (3, "F"), (4, "H"), (5, "G"), (6, "Z"), (7, "X"), (8, "C"),
@@ -124,7 +124,7 @@ impl Shortcut {
         Shortcut { key_code: key_code.into(), modifiers }
     }
 
-    /// Без ⌘, ⌃ или ⌥ сочетание перехватывало бы обычный ввод текста.
+    /// Without ⌘, ⌃ or ⌥ the shortcut would intercept regular typing.
     pub fn is_usable(self) -> bool {
         self.modifiers & (CMD | CONTROL | OPTION) != 0
     }
@@ -146,7 +146,7 @@ impl Shortcut {
         }
     }
 
-    /// Флаги модификаторов для keyEquivalent пункта меню.
+    /// Modifier flags for a menu item keyEquivalent.
     pub fn menu_modifiers(self) -> NSEventModifierFlags {
         let mut flags = NSEventModifierFlags::empty();
         for (carbon, flag) in [
@@ -190,7 +190,7 @@ pub enum Action {
 }
 
 impl Action {
-    /// Порядок пунктов в меню и строк в настройках.
+    /// Order of menu items and rows in settings.
     pub const ALL: [Action; 13] = [
         Action::Region,
         Action::RepeatRegion,
@@ -257,7 +257,7 @@ impl Action {
         }
     }
 
-    /// Номер действия для Carbon, по нему обработчик находит действие в ALL.
+    /// Action number for Carbon, the handler uses it to find the action in ALL.
     pub fn index(self) -> u32 {
         Action::ALL.iter().position(|a| *a == self).unwrap_or(0) as u32
     }
@@ -281,7 +281,7 @@ impl Action {
     }
 
     fn default_shortcut(self) -> Option<Shortcut> {
-        // ⌃⇧1, ⌃⇧2, ⌃⇧3 - системные ⌘⇧3 и ⌘⇧4 остаются за macOS.
+        // ⌃⇧1, ⌃⇧2, ⌃⇧3, so the system ⌘⇧3 and ⌘⇧4 stay with macOS.
         let key_code = match self {
             Action::Screen => 18,
             Action::Region => 19,
@@ -302,7 +302,7 @@ impl Action {
         Some(Shortcut { key_code, modifiers: CONTROL | SHIFT })
     }
 
-    /// Текущее сочетание. Пустая строка в настройках означает, что пользователь его снял.
+    /// Current shortcut. An empty string in settings means the user cleared it.
     pub fn shortcut(self) -> Option<Shortcut> {
         let stored = NSUserDefaults::standardUserDefaults().stringForKey(&NSString::from_str(self.defaults_key()));
         match stored {
@@ -311,8 +311,8 @@ impl Action {
         }
     }
 
-    /// Показано ли действие в меню и работает ли его сочетание. Загрузка последнего снимка
-    /// выключается и вместе с самой загрузкой.
+    /// Whether the action is shown in the menu and its shortcut works. Uploading the last screenshot
+    /// is turned off together with uploading itself.
     pub fn is_enabled(self) -> bool {
         (self != Action::UploadLast || settings::upload_enabled())
             && settings::flag(&self.enabled_key()).unwrap_or(true)
@@ -337,10 +337,10 @@ thread_local! {
     static REGISTERED: RefCell<Vec<*mut c_void>> = const { RefCell::new(Vec::new()) };
 }
 
-/// Подключает обработчик горячих клавиш и регистрирует сохранённые сочетания.
+/// Installs the hotkey handler and registers the saved shortcuts.
 pub fn install() {
     let spec = EventTypeSpec { event_class: KEYBOARD_EVENT_CLASS, event_kind: HOT_KEY_PRESSED };
-    // SAFETY: spec живёт до конца вызова, а Carbon копирует список типов событий себе.
+    // SAFETY: spec lives until the end of the call, and Carbon copies the event type list.
     let status = unsafe {
         InstallEventHandler(GetApplicationEventTarget(), handle_hot_key, 1, &raw const spec, null_mut(), null_mut())
     };
@@ -362,10 +362,10 @@ pub fn register_all() {
     }
 }
 
-/// Снимает все сочетания, иначе при записи нового нажатие текущего запускало бы захват.
+/// Unregisters all shortcuts, otherwise pressing the current one while recording a new one would start a capture.
 pub fn unregister_all() {
     for hot_key in REGISTERED.take() {
-        // SAFETY: в REGISTERED лежат только ссылки, которые вернул успешный RegisterEventHotKey.
+        // SAFETY: REGISTERED holds only refs returned by a successful RegisterEventHotKey.
         unsafe { UnregisterEventHotKey(hot_key) };
     }
 }
@@ -373,7 +373,7 @@ pub fn unregister_all() {
 fn register(action: Action, shortcut: Shortcut) -> Option<*mut c_void> {
     let id = EventHotKeyID { signature: SIGNATURE, id: action.index() };
     let mut hot_key = null_mut();
-    // SAFETY: hot_key - локальная переменная, куда Carbon пишет ссылку на зарегистрированное сочетание.
+    // SAFETY: hot_key is a local variable where Carbon writes the ref of the registered shortcut.
     let status = unsafe {
         RegisterEventHotKey(
             shortcut.key_code,
@@ -387,7 +387,7 @@ fn register(action: Action, shortcut: Shortcut) -> Option<*mut c_void> {
     (status == NO_ERR).then_some(hot_key)
 }
 
-/// Проверяет сочетание для действия. Возвращает текст конфликта для пользователя.
+/// Checks a shortcut for an action. Returns the conflict text for the user.
 pub fn conflict(action: Action, shortcut: Shortcut) -> Option<String> {
     if let Some(other) = Action::ALL.into_iter().find(|a| *a != action && a.shortcut() == Some(shortcut)) {
         return Some(format!("Already used for {}.", other.title()));
@@ -395,10 +395,10 @@ pub fn conflict(action: Action, shortcut: Shortcut) -> Option<String> {
     if system_shortcuts().contains(&shortcut) {
         return Some("Used by a macOS keyboard shortcut.".into());
     }
-    // Пробная регистрация - единственный способ узнать, занято ли сочетание другим приложением.
+    // A trial registration is the only way to find out whether another app uses the shortcut.
     match register(action, shortcut) {
         Some(hot_key) => {
-            // SAFETY: hot_key только что вернул успешный RegisterEventHotKey.
+            // SAFETY: hot_key was just returned by a successful RegisterEventHotKey.
             unsafe { UnregisterEventHotKey(hot_key) };
             None
         }
@@ -406,18 +406,18 @@ pub fn conflict(action: Action, shortcut: Shortcut) -> Option<String> {
     }
 }
 
-/// Включённые системные сочетания из Системных настроек -> Клавиатура.
+/// Enabled system shortcuts from System Settings -> Keyboard.
 fn system_shortcuts() -> Vec<Shortcut> {
     let mut list: *const CFArray = ptr::null();
-    // SAFETY: list - локальная переменная для выходного параметра.
+    // SAFETY: list is a local variable for the out parameter.
     if unsafe { CopySymbolicHotKeys(&raw mut list) } != NO_ERR {
         return Vec::new();
     }
-    // SAFETY: по правилу Copy из Core Foundation владение массивом переходит к нам.
+    // SAFETY: by the Core Foundation Copy rule we own the array.
     let Some(list) = NonNull::new(list.cast_mut()).map(|p| unsafe { CFRetained::from_raw(p) }) else {
         return Vec::new();
     };
-    // SAFETY: CFArray и NSArray взаимозаменяемы, а элементы массива - словари с описанием сочетаний.
+    // SAFETY: CFArray and NSArray are toll-free bridged, and the elements are dictionaries describing shortcuts.
     let list: &NSArray<NSDictionary<NSString, AnyObject>> = unsafe { bridge::toll_free(&*list) };
     list.iter()
         .filter_map(|info| {
@@ -435,7 +435,7 @@ fn system_shortcuts() -> Vec<Shortcut> {
 
 extern "C" fn handle_hot_key(_call: *mut c_void, event: *mut c_void, _data: *mut c_void) -> OSStatus {
     let mut id = EventHotKeyID::default();
-    // SAFETY: event пришёл от Carbon, а буфер id нужного размера и типа для параметра hkid.
+    // SAFETY: event comes from Carbon, and the id buffer has the right size and type for the hkid parameter.
     let status = unsafe {
         GetEventParameter(
             event,
@@ -447,7 +447,7 @@ extern "C" fn handle_hot_key(_call: *mut c_void, event: *mut c_void, _data: *mut
             ptr::from_mut(&mut id).cast(),
         )
     };
-    // Carbon вызывает обработчик на главном потоке, из цикла событий NSApplication.
+    // Carbon calls the handler on the main thread, from the NSApplication event loop.
     let action = usize::try_from(id.id).ok().and_then(|index| Action::ALL.get(index));
     if let (NO_ERR, Some(action), Some(mtm)) = (status, action, MainThreadMarker::new()) {
         action.run(mtm);

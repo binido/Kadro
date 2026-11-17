@@ -1,5 +1,5 @@
-//! Проверка обновлений по последнему релизу на GitHub. Kadro ничего не скачивает сам,
-//! а предлагает открыть страницу релиза.
+//! Update check against the latest GitHub release. Kadro downloads nothing itself,
+//! it offers to open the release page.
 
 use dispatch2::DispatchQueue;
 use objc2::MainThreadMarker;
@@ -10,10 +10,10 @@ use crate::settings::{self, Settings};
 use crate::{output, upload};
 
 const LATEST_RELEASE: &str = "https://api.github.com/repos/binido/Kadro/releases/latest";
-/// Автоматическая проверка не чаще раза в сутки.
+/// Automatic check runs at most once a day.
 const CHECK_INTERVAL: u64 = 86_400;
 
-/// Версия и страница последнего релиза из ответа GitHub API.
+/// Version and page of the latest release from the GitHub API response.
 pub fn parse_release(json: &str) -> Option<(String, String)> {
     let field = |name: &str| {
         let key = format!("\"{name}\"");
@@ -25,7 +25,7 @@ pub fn parse_release(json: &str) -> Option<(String, String)> {
     Some((field("tag_name")?.trim_start_matches('v').to_string(), field("html_url")?))
 }
 
-/// Новее ли версия `latest`, чем `current`. Версии сравниваются по числам через точку.
+/// Whether `latest` is newer than `current`. Versions are compared by dot-separated numbers.
 pub fn is_newer(latest: &str, current: &str) -> bool {
     let numbers = |version: &str| -> Vec<u64> {
         version
@@ -46,7 +46,7 @@ fn now() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
-/// Проверка при запуске: раз в сутки, если не выключена. Сообщает только о новой версии.
+/// Check on launch: once a day unless turned off. Reports only a new version.
 pub fn check_on_launch() {
     if !Settings::load().check_updates {
         return;
@@ -57,8 +57,8 @@ pub fn check_on_launch() {
     }
 }
 
-/// Спрашивает GitHub о последнем релизе. `manual` - проверку попросил пользователь,
-/// тогда и «обновлений нет», и ошибка показываются.
+/// Asks GitHub about the latest release. `manual` means the user asked for the check,
+/// then both "no updates" and errors are shown.
 pub fn check(manual: bool) {
     output::in_background(move || {
         let result =

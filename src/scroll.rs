@@ -1,9 +1,9 @@
-//! Захват с прокруткой: выделенная область снимается кадр за кадром, пока её прокручивают,
-//! и кадры склеиваются в один длинный снимок.
+//! Scrolling capture: the selected area is captured frame by frame while it scrolls,
+//! and the frames are stitched into one long screenshot.
 //!
-//! Автоматическая прокрутка шлёт события колеса туда, где выделена область, и после каждого шага
-//! ждёт, пока картинка перестанет меняться. В ручном режиме прокручивает пользователь, а Kadro
-//! подхватывает каждое устоявшееся положение. Сеанс живёт в `SESSION` до конца или отмены.
+//! Automatic scrolling sends wheel events where the area is selected, and after each step
+//! waits until the image stops changing. In manual mode the user scrolls, and Kadro
+//! picks up every settled position. The session lives in `SESSION` until it finishes or is cancelled.
 
 use std::cell::RefCell;
 use std::ffi::c_void;
@@ -36,13 +36,13 @@ use crate::{assets, output, preview};
 
 const ACCESSIBILITY_SETTINGS_URL: &str =
     "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
-/// Пауза после шага прокрутки и между проверками, устоялась ли картинка.
+/// Pause after a scroll step and between checks whether the image has settled.
 const SETTLE_SECONDS: f64 = 0.12;
-/// Сколько раз проверять, устоялась ли картинка, прежде чем взять кадр как есть.
+/// How many times to check whether the image has settled before taking the frame as is.
 const SETTLE_TRIES: u32 = 8;
-/// Как часто снимать кадр в ручном режиме.
+/// How often to capture a frame in manual mode.
 const MANUAL_SECONDS: f64 = 0.15;
-/// Самое большое смещение одного события колеса в точках. Крупный шаг дробится на несколько событий.
+/// Largest offset of one wheel event in points. A large step is split into several events.
 const WHEEL_STEP: f64 = 60.0;
 
 #[link(name = "ApplicationServices", kind = "framework")]
@@ -63,7 +63,7 @@ enum Mode {
 }
 
 struct Session {
-    /// Область в глобальных точках CG.
+    /// Area in global CG points.
     area: CGRect,
     scale: f64,
     app: String,
@@ -71,7 +71,7 @@ struct Session {
     config: Retained<SCStreamConfiguration>,
     mode: Option<Mode>,
     stitcher: Option<Stitcher>,
-    /// Последний снятый кадр, чтобы понять, устоялась ли картинка.
+    /// Last captured frame, to tell whether the image has settled.
     previous: Option<Frame>,
     tries: u32,
     limit: usize,
@@ -84,7 +84,7 @@ struct Session {
 }
 
 define_class!(
-    /// Кнопки окна управления прокруткой.
+    /// Buttons of the scroll control window.
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
     struct Controller;
@@ -120,7 +120,7 @@ define_class!(
 );
 
 define_class!(
-    /// Окно управления без рамки, которое всё же принимает клавиатуру: Return и Esc.
+    /// Borderless control window that still accepts the keyboard: Return and Esc.
     #[unsafe(super(NSPanel, NSWindow, NSResponder, NSObject))]
     #[thread_kind = MainThreadOnly]
     struct HudPanel;
@@ -134,7 +134,7 @@ define_class!(
 );
 
 define_class!(
-    /// Пунктирная рамка вокруг прокручиваемой области. Мышь проходит сквозь неё.
+    /// Dashed frame around the scrolled area. The mouse passes through it.
     #[unsafe(super(NSView, NSResponder, NSObject))]
     #[thread_kind = MainThreadOnly]
     struct BorderView;
@@ -149,7 +149,7 @@ define_class!(
             ));
             border.setLineWidth(2.0);
             let dash = [6.0, 4.0];
-            // SAFETY: массив из двух длин живёт до конца вызова.
+            // SAFETY: the two-length array lives until the end of the call.
             unsafe { border.setLineDash_count_phase(dash.as_ptr(), 2, 0.0) };
             NSColor::systemPinkColor().setStroke();
             border.stroke();
@@ -157,8 +157,8 @@ define_class!(
     }
 );
 
-/// Начинает сеанс для области `rect` в точках от левого верхнего угла дисплея: показывает рамку
-/// и кнопки выбора направления.
+/// Starts a session for `rect` in points from the display top left corner: shows the frame
+/// and the direction buttons.
 pub fn start(display: CGDirectDisplayID, rect: CGRect, app: String) {
     capture::with_content(move |content| {
         let Some(found) = unsafe { content.displays() }.iter().find(|d| unsafe { d.displayID() } == display) else {
@@ -175,7 +175,7 @@ pub fn start(display: CGDirectDisplayID, rect: CGRect, app: String) {
         let origin = CGDisplayBounds(display).origin;
         let area = CGRect::new(CGPoint::new(origin.x + rect.origin.x, origin.y + rect.origin.y), rect.size);
         let app = app.clone();
-        // Фильтр и настройки создаются один раз и дальше используются только на главном потоке.
+        // The filter and configuration are created once and then used only on the main thread.
         let parts = Sendable((filter, config));
         DispatchQueue::main().exec_async(move || {
             let Some(mtm) = MainThreadMarker::new() else { return };
@@ -185,13 +185,13 @@ pub fn start(display: CGDirectDisplayID, rect: CGRect, app: String) {
     });
 }
 
-/// Обёртка, чтобы передать объекты ScreenCaptureKit на главный поток, где с ними и работают.
+/// Wrapper to pass ScreenCaptureKit objects to the main thread, where they are used.
 struct Sendable<T>(T);
-// SAFETY: объекты создаются в обработчике ScreenCaptureKit и дальше используются только на главном потоке.
+// SAFETY: the objects are created in the ScreenCaptureKit handler and then used only on the main thread.
 unsafe impl<T> Send for Sendable<T> {}
 
 impl<T> Sendable<T> {
-    /// Метод, а не разбор поля: замыкание забирает обёртку целиком, а не её непересылаемое поле.
+    /// A method rather than field destructuring: the closure captures the whole wrapper, not its non-Send field.
     fn into_inner(self) -> T {
         self.0
     }
@@ -234,7 +234,7 @@ fn open(
     let size = NSSize::new(size.width + 24.0, size.height + 16.0);
     row.setFrame(NSRect::new(NSPoint::new(12.0, 8.0), NSSize::new(size.width - 24.0, size.height - 16.0)));
 
-    // Окно управления под областью, а если внизу нет места - внутри неё у нижнего края.
+    // The control window goes below the area, or inside it at the bottom edge if there is no room below.
     let cocoa = preview::to_cocoa(mtm, area);
     let below = cocoa.origin.y - size.height - 10.0;
     let y = if below > 0.0 { below } else { cocoa.origin.y + 10.0 };
@@ -250,7 +250,7 @@ fn open(
     };
     let hud: Retained<NSPanel> = Retained::into_super(hud);
     unsafe { hud.setReleasedWhenClosed(false) };
-    // Панель по умолчанию прячется, когда Kadro не активен, а прокручиваемое приложение может перехватить фокус.
+    // By default the panel hides when Kadro is inactive, and the scrolled app may take focus.
     hud.setHidesOnDeactivate(false);
     hud.setLevel(NSScreenSaverWindowLevel);
     hud.setBackgroundColor(Some(&NSColor::windowBackgroundColor()));
@@ -309,7 +309,7 @@ fn open(
     }));
 }
 
-/// Начинает прокрутку в выбранном режиме. Автоматической нужен доступ к универсальному доступу.
+/// Starts scrolling in the chosen mode. Automatic mode needs Accessibility permission.
 fn begin(mtm: MainThreadMarker, mode: Mode) {
     if mode != Mode::Manual && !trusted() {
         match explain_accessibility(mtm) {
@@ -334,7 +334,7 @@ fn with_session<R>(f: impl FnOnce(&mut Session) -> R) -> Option<R> {
     SESSION.with_borrow_mut(|session| session.as_mut().map(f))
 }
 
-/// Снимает кадр области. Результат приходит на главный поток в `received`.
+/// Captures a frame of the area. The result arrives on the main thread in `received`.
 fn grab() {
     let Some((filter, config)) = with_session(|s| (s.filter.clone(), s.config.clone())) else { return };
     let handler = RcBlock::new(move |image: *mut CGImage, error: *mut NSError| {
@@ -349,7 +349,7 @@ fn grab() {
     }
 }
 
-/// Следующий кадр. Склеивается, только когда картинка перестала меняться.
+/// Next frame. It is stitched only once the image stops changing.
 fn received(frame: Option<Frame>) {
     let Some(frame) = frame else { return close() };
     let Some(mode) = with_session(|s| s.mode).flatten() else { return };
@@ -377,7 +377,7 @@ fn received(frame: Option<Frame>) {
         match pushed {
             _ if height >= session.limit => Next::Finish,
             Push::Added(_) => session.stepped(mode),
-            // Автоматическая прокрутка упёрлась в конец или потеряла страницу.
+            // Automatic scrolling hit the end or lost the page.
             Push::Same | Push::Lost if mode != Mode::Manual => Next::Finish,
             Push::Same | Push::Lost => Next::Wait,
         }
@@ -401,8 +401,8 @@ enum Next {
 }
 
 impl Session {
-    /// После шага прокрутки первый же кадр может быть ещё старым, поэтому устоявшимся
-    /// считается только второй одинаковый подряд.
+    /// Right after a scroll step the first frame may still be stale, so only the second identical
+    /// frame in a row counts as settled.
     fn stepped(&mut self, mode: Mode) -> Next {
         if mode != Mode::Manual {
             self.previous = None;
@@ -417,13 +417,13 @@ fn later(seconds: f64) {
     with_session(|session| session.timer = Some(timer));
 }
 
-/// Прокручивает область на шаг. Курсор ставится в её середину, туда macOS и отдаёт колесо.
+/// Scrolls the area by one step. The cursor is moved to its middle, that is where macOS sends the wheel.
 fn scroll(mode: Mode) {
     let Some(area) = with_session(|s| s.area) else { return };
     let settings = Settings::load();
     let center = CGPoint::new(area.origin.x + area.size.width / 2.0, area.origin.y + area.size.height / 2.0);
     let _ = CGWarpMouseCursorPosition(center);
-    // Отрицательное колесо показывает то, что ниже.
+    // A negative wheel delta reveals what is below.
     let direction = if (mode == Mode::Down) != settings.scroll_reverse { -1.0 } else { 1.0 };
     let mut left = area.size.height * settings.scroll_speed.step();
     while left > 0.0 {
@@ -437,7 +437,7 @@ fn scroll(mode: Mode) {
     }
 }
 
-/// Отдаёт склеенный снимок как обычный снимок области.
+/// Delivers the stitched screenshot like a regular area screenshot.
 fn finish() {
     let Some(result) = with_session(|session| {
         let flipped = session.mode == Some(Mode::Up);
@@ -454,7 +454,7 @@ fn finish() {
     output::in_background(move || output::deliver(&image, scale, &shot));
 }
 
-/// Закрывает окна сеанса без снимка.
+/// Closes the session windows without a screenshot.
 fn close() {
     if let Some(session) = SESSION.take() {
         if let Some(timer) = session.timer {
@@ -466,15 +466,15 @@ fn close() {
     CONTROLLER.take();
 }
 
-/// Есть ли у Kadro универсальный доступ. Без него macOS не пропускает события колеса.
+/// Whether Kadro has Accessibility permission. Without it macOS drops wheel events.
 fn trusted() -> bool {
     let key = CFString::from_static_str("AXTrustedCheckOptionPrompt");
     let options = CFDictionary::<CFString, CFBoolean>::from_slices(&[&*key], &[CFBoolean::new(false)]);
-    // SAFETY: словарь живёт до конца вызова, функция только читает его.
+    // SAFETY: the dictionary lives until the end of the call, the function only reads it.
     unsafe { AXIsProcessTrustedWithOptions(CFRetained::as_ptr(&options).as_ptr().cast()) }
 }
 
-/// Объясняет, зачем нужен универсальный доступ. Возвращает ручной режим, если выбран он.
+/// Explains why Accessibility permission is needed. Returns manual mode if the user picks it.
 fn explain_accessibility(mtm: MainThreadMarker) -> Option<Mode> {
     let alert = NSAlert::new(mtm);
     alert.setMessageText(ns_string!("Kadro needs Accessibility access to scroll"));
@@ -487,10 +487,10 @@ fn explain_accessibility(mtm: MainThreadMarker) -> Option<Mode> {
     NSApplication::sharedApplication(mtm).activate();
     let response = alert.runModal();
     if response == NSAlertFirstButtonReturn {
-        // Системный запрос добавляет Kadro в список, остаётся включить переключатель.
+        // The system prompt adds Kadro to the list, the user only has to turn the switch on.
         let key = CFString::from_static_str("AXTrustedCheckOptionPrompt");
         let options = CFDictionary::<CFString, CFBoolean>::from_slices(&[&*key], &[CFBoolean::new(true)]);
-        // SAFETY: словарь живёт до конца вызова, функция только читает его.
+        // SAFETY: the dictionary lives until the end of the call, the function only reads it.
         unsafe { AXIsProcessTrustedWithOptions(CFRetained::as_ptr(&options).as_ptr().cast()) };
         if let Some(url) = NSURL::URLWithString(ns_string!(ACCESSIBILITY_SETTINGS_URL)) {
             NSWorkspace::sharedWorkspace().openURL(&url);

@@ -1,6 +1,6 @@
-//! Kadro - снимки экрана из строки меню macOS.
+//! Kadro, screenshots from the macOS menu bar.
 //!
-//! Здесь живут точка входа и пункт в строке меню. Захват, вывод и окна разнесены по модулям.
+//! This holds the entry point and the menu bar item. Capture, output and windows live in their own modules.
 
 mod annotation;
 mod assets;
@@ -44,13 +44,13 @@ use objc2_foundation::{NSArray, NSNotification, NSObject, NSObjectProtocol, NSSt
 use hotkeys::Action;
 
 thread_local! {
-    // Иконка исчезает из строки меню, как только NSStatusItem освобождается.
+    // The icon disappears from the menu bar as soon as NSStatusItem is released.
     static STATUS_ITEM: OnceCell<Retained<NSStatusItem>> = const { OnceCell::new() };
-    // Меню иконки. Сочетание Show Kadro Menu показывает его у курсора, даже если иконка скрыта.
+    // Icon menu. The Show Kadro Menu shortcut shows it at the cursor even if the icon is hidden.
     static MENU: OnceCell<Retained<NSMenu>> = const { OnceCell::new() };
 }
 
-/// Показывает или прячет иконку в строке меню.
+/// Shows or hides the menu bar icon.
 pub fn set_icon_visible(visible: bool) {
     STATUS_ITEM.with(|item| {
         if let Some(item) = item.get() {
@@ -59,7 +59,7 @@ pub fn set_icon_visible(visible: bool) {
     });
 }
 
-/// Открывает меню Kadro у курсора.
+/// Opens the Kadro menu at the cursor.
 pub fn show_menu(mtm: MainThreadMarker) {
     MENU.with(|menu| {
         if let Some(menu) = menu.get() {
@@ -69,7 +69,7 @@ pub fn show_menu(mtm: MainThreadMarker) {
     });
 }
 
-/// Показывает секунды отсчёта рядом с иконкой в строке меню, None - убирает.
+/// Shows countdown seconds next to the menu bar icon, None removes them.
 pub fn show_countdown(seconds: Option<u32>) {
     let Some(mtm) = MainThreadMarker::new() else { return };
     STATUS_ITEM.with(|item| {
@@ -95,7 +95,7 @@ define_class!(
             updates::check_on_launch();
         }
 
-        // Картинки, открытые через Kadro из Finder или перетащенные на его значок, и ссылки kadro://.
+        // Images opened with Kadro from Finder or dropped on its icon, and kadro:// links.
         #[unsafe(method(application:openURLs:))]
         fn open_urls(&self, _application: &NSApplication, urls: &NSArray<NSURL>) {
             for url in urls {
@@ -108,7 +108,7 @@ define_class!(
             }
         }
 
-        // Повторный запуск уже открытого Kadro - путь к настройкам, когда иконка скрыта.
+        // Launching Kadro again while it runs opens settings, which is the way in when the icon is hidden.
         #[unsafe(method(applicationShouldHandleReopen:hasVisibleWindows:))]
         fn should_handle_reopen(&self, _application: &NSApplication, _visible: bool) -> bool {
             prefs::show(self.mtm());
@@ -117,8 +117,8 @@ define_class!(
     }
 
     unsafe impl NSMenuDelegate for AppDelegate {
-        // Сочетания и выключенные действия могли поменяться в настройках, поэтому пункты
-        // обновляются при каждом открытии.
+        // Shortcuts and disabled actions may have changed in settings, so the items
+        // are updated on every open.
         #[unsafe(method(menuNeedsUpdate:))]
         fn menu_needs_update(&self, menu: &NSMenu) {
             for item in menu.itemArray() {
@@ -181,7 +181,7 @@ impl AppDelegate {
         let item = NSStatusBar::systemStatusBar().statusItemWithLength(NSVariableStatusItemLength);
         if let Some(button) = item.button(mtm) {
             button.setImage(assets::icon(assets::KADRO, 18.0).as_deref());
-            // Иначе секунды отсчёта заменили бы иконку, а не встали рядом.
+            // Otherwise the countdown seconds would replace the icon instead of sitting next to it.
             button.setImagePosition(NSCellImagePosition::ImageLeading);
         }
 
@@ -193,7 +193,7 @@ impl AppDelegate {
         menu.addItem(&NSMenuItem::separatorItem(mtm));
         self.add_action(&menu, Action::OpenLibrary);
 
-        // Редкие действия. У части из них нет сочетания по умолчанию, поэтому они остаются в меню.
+        // Rare actions. Some of them have no default shortcut, so they stay in the menu.
         let more = NSMenu::new(mtm);
         more.setDelegate(Some(ProtocolObject::from_ref(self)));
         for action in [Action::RepeatRegion, Action::DelayedScreen, Action::ActiveWindow] {
@@ -214,7 +214,7 @@ impl AppDelegate {
 
         menu.addItem(&NSMenuItem::separatorItem(mtm));
         self.add_item(&menu, "Settings…", sel!(showSettings:), ",", assets::SETTINGS);
-        // Без target действие уходит по цепочке ответчиков и попадает в NSApplication.
+        // Without a target the action goes up the responder chain and reaches NSApplication.
         unsafe {
             menu.addItemWithTitle_action_keyEquivalent(
                 ns_string!("Quit Kadro"),
@@ -232,7 +232,7 @@ impl AppDelegate {
         });
     }
 
-    /// Пункт действия. Сочетание рядом с ним ставит `menuNeedsUpdate:` по tag.
+    /// Action item. `menuNeedsUpdate:` sets the shortcut next to it by tag.
     fn add_action(&self, menu: &NSMenu, action: Action) {
         let index = Action::ALL.iter().position(|a| *a == action).unwrap_or_default();
         let item = self.add_item(menu, action.title(), sel!(runAction:), "", action_icon(action));
@@ -271,7 +271,7 @@ fn action_icon(action: Action) -> &'static [u8] {
     }
 }
 
-/// Оставляет видимыми только разделители, у которых есть видимые пункты и выше, и ниже.
+/// Keeps visible only the separators that have visible items both above and below.
 fn hide_extra_separators(menu: &NSMenu) {
     let mut pending: Option<Retained<NSMenuItem>> = None;
     let mut seen_item = false;
@@ -290,26 +290,26 @@ fn hide_extra_separators(menu: &NSMenu) {
     }
 }
 
-/// Tag пункта меню для действия с этим номером в [`Action::ALL`].
-/// Номер сдвинут на единицу: у остальных пунктов меню tag 0.
+/// Menu item tag for the action with this index in [`Action::ALL`].
+/// The index is shifted by one, other menu items have tag 0.
 fn tag_for_action(index: usize) -> isize {
     isize::try_from(index).map_or(0, |index| index + 1)
 }
 
-/// Действие пункта меню по его tag, обратно к [`tag_for_action`].
+/// Menu item action by its tag, the inverse of [`tag_for_action`].
 fn action_for_tag(tag: isize) -> Option<Action> {
     Action::ALL.get(usize::try_from(tag - 1).ok()?).copied()
 }
 
 fn main() {
-    // Тот же исполняемый файл распознаёт текст в отдельном процессе и сразу выходит.
+    // The same executable recognizes text in a separate process and exits right away.
     if recognize::run_child() {
         return;
     }
-    // Rust вызывает main на главном потоке процесса, поэтому маркер есть всегда.
+    // Rust calls main on the process main thread, so the marker is always available.
     let mtm = MainThreadMarker::new().expect("main runs on the main thread");
     let app = NSApplication::sharedApplication(mtm);
-    // Только иконка в строке меню, без значка в Dock.
+    // Menu bar icon only, no Dock icon.
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
     let delegate = AppDelegate::new(mtm);
     app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
@@ -325,7 +325,7 @@ mod tests {
         for (index, action) in Action::ALL.into_iter().enumerate() {
             assert_eq!(action_for_tag(tag_for_action(index)), Some(action));
         }
-        // Tag 0 - у пунктов без действия, вроде Settings и Quit.
+        // Tag 0 is for items without an action, like Settings and Quit.
         assert_eq!(action_for_tag(0), None);
     }
 }

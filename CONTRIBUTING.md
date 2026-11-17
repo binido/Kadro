@@ -60,10 +60,40 @@ or signing credentials. Automatic scrolling also requires Accessibility permissi
 | Editor and drawing | `src/editor.rs`, `src/document.rs`, `src/annotation.rs`, `src/paint.rs`, `src/backdrop.rs` |
 | Saving, preview, pins and library | `src/output.rs`, `src/preview.rs`, `src/pin.rs`, `src/library.rs`, `src/browser.rs` |
 | OCR, uploads, automation and updates | `src/recognize.rs`, `src/upload.rs`, `src/sigv4.rs`, `src/links.rs`, `src/updates.rs` |
+| Shared helpers | `src/assets.rs` (font, icons), `src/bridge.rs` (CF/NS casts), `src/geometry.rs`, `src/keys.rs`, `src/measure.rs` |
 
 Kadro uses Rust with AppKit and Apple frameworks through `objc2`. Keep the interface native;
 reuse the existing controls, icons and helpers. Avoid new dependencies or abstractions for work
 that the platform or current code already handles. Keep unrelated cleanup out of a focused fix.
+
+Every module starts with a `//!` comment saying what it owns, so reading the first lines of a file
+is the quickest way to find your place.
+
+## Code conventions
+
+- Comments and doc comments are in English. A doc comment is usually one sentence; add a second
+  line only when it warns about something that would break.
+- Every `unsafe` block gets a `// SAFETY:` comment explaining why it holds.
+- AppKit objects are touched only on the main thread. Functions that need it take a
+  `MainThreadMarker`; slow work (encoding, files, network, OCR) runs in the background.
+- Coordinates differ by API: Core Graphics and ScreenCaptureKit put the origin at the top left of
+  the main display, Cocoa at the bottom left. Comments near conversions say which one is in use.
+- Image sizes are in pixels, UI sizes in points; the screenshot scale converts between them.
+- A `ponytail:` comment marks a known, deliberate shortcut and names its limit. Fixing one is a
+  welcome contribution.
+- Settings live in `NSUserDefaults` through `src/settings.rs`; secrets go to the Keychain, never
+  to defaults or files.
+
+## Add a menu action or shortcut
+
+Actions are listed once in `Action` in `src/hotkeys.rs`. To add one:
+
+1. Add the variant and append it to `Action::ALL`. The order is the order of menu items and
+   settings rows; the first seven are capture actions in the Shortcuts tab (`src/prefs.rs`).
+2. Fill in `title`, `run`, `defaults_key` and `default_shortcut` (usually `None`).
+3. Give it an icon in `src/main.rs` and place it in the menu built there.
+4. If it should be reachable from `kadro://` links, add it to `ROUTES` in `src/links.rs` and
+   to the link table in [docs/guide.md](docs/guide.md).
 
 ## Check your change
 

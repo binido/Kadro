@@ -1,6 +1,6 @@
-//! Захват экрана, области и окон через ScreenCaptureKit.
+//! Capturing the screen, an area and windows through ScreenCaptureKit.
 //!
-//! Готовый снимок уходит в [`output::deliver`], а доступ к записи экрана проверяется перед каждым захватом.
+//! The finished screenshot goes to [`output::deliver`], and Screen Recording permission is checked before every capture.
 
 use std::cell::Cell;
 use std::ptr::NonNull;
@@ -32,7 +32,7 @@ thread_local! {
     static COUNTING_DOWN: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Вид снимка.
+/// Screenshot kind.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Kind {
     Screen,
@@ -49,7 +49,7 @@ impl Kind {
         }
     }
 
-    /// Значение kMDItemScreenCaptureType, как у системных снимков.
+    /// kMDItemScreenCaptureType value, same as for system screenshots.
     pub fn finder_type(self) -> &'static str {
         match self {
             Kind::Screen => "display",
@@ -59,7 +59,7 @@ impl Kind {
     }
 }
 
-/// Что снято: вид, место на экране в глобальных точках и приложение.
+/// What was captured: kind, frame on screen in global points, and the application.
 #[derive(Clone, Debug)]
 pub struct Shot {
     pub kind: Kind,
@@ -67,13 +67,13 @@ pub struct Shot {
     pub app: String,
 }
 
-/// Проверяет доступ к записи экрана. Без доступа объясняет, где его включить.
+/// Checks Screen Recording permission. Without it, explains where to turn it on.
 pub fn has_access(mtm: MainThreadMarker) -> bool {
     if CGPreflightScreenCaptureAccess() {
         return true;
     }
-    // Системный запрос macOS показывает один раз, потом молча отказывает.
-    // Поэтому при первой попытке за запуск - он, а дальше своё объяснение.
+    // macOS shows its system prompt once, then silently denies.
+    // So the first attempt per launch shows that prompt, later attempts show our own explanation.
     if ACCESS_REQUESTED.replace(true) {
         explain_missing_access(mtm);
     } else {
@@ -98,7 +98,7 @@ fn explain_missing_access(mtm: MainThreadMarker) {
     }
 }
 
-/// Имя приложения, с которым работает пользователь, для шаблона имени файла.
+/// Name of the app the user is working in, for the file name template.
 pub fn frontmost_app_name() -> String {
     NSWorkspace::sharedWorkspace()
         .frontmostApplication()
@@ -107,17 +107,17 @@ pub fn frontmost_app_name() -> String {
         .unwrap_or_default()
 }
 
-/// Снимает целиком дисплей, на котором стоит курсор.
+/// Captures the whole display under the cursor.
 pub fn capture_screen(mtm: MainThreadMarker) {
     if !has_access(mtm) {
         return;
     }
     let cursor = CGEvent::location(CGEvent::new(None).as_deref());
-    // SCDisplay.frame и позиция CGEvent в одних координатах - от левого верхнего угла главного дисплея.
+    // SCDisplay.frame and the CGEvent location share coordinates, from the top left of the main display.
     capture(move |display| geometry::contains(unsafe { display.frame() }, cursor), None, frontmost_app_name());
 }
 
-/// Снимает весь экран после обратного отсчёта в строке меню.
+/// Captures the whole screen after a countdown in the menu bar.
 pub fn capture_delayed(mtm: MainThreadMarker) {
     if !has_access(mtm) || COUNTING_DOWN.replace(true) {
         return;
@@ -130,7 +130,7 @@ pub fn capture_delayed(mtm: MainThreadMarker) {
             return crate::show_countdown(Some(remaining.get()));
         }
         unsafe { timer.as_ref() }.invalidate();
-        // Отсчёт убирается до снимка, чтобы не попасть в строку меню на нём.
+        // The countdown is removed before capture so it does not end up in the menu bar on the screenshot.
         crate::show_countdown(None);
         COUNTING_DOWN.set(false);
         capture_screen(mtm);
@@ -138,13 +138,13 @@ pub fn capture_delayed(mtm: MainThreadMarker) {
     unsafe { NSTimer::scheduledTimerWithTimeInterval_repeats_block(1.0, true, &tick) };
 }
 
-/// Снимает прямоугольник в точках относительно левого верхнего угла дисплея и запоминает его.
+/// Captures a rectangle in points relative to the display top left corner and remembers it.
 pub fn capture_region(display_id: CGDirectDisplayID, rect: CGRect, app: String) {
     settings::set_string(settings::LAST_AREA, &encode_area(display_id, rect));
     capture(move |display| unsafe { display.displayID() } == display_id, Some(rect), app);
 }
 
-/// Снимает последнюю выделенную область, если её дисплей на месте.
+/// Captures the last selected area if its display is still connected.
 pub fn repeat_area(mtm: MainThreadMarker) {
     if !has_access(mtm) {
         return;
@@ -164,25 +164,25 @@ pub fn repeat_area(mtm: MainThreadMarker) {
     }
 }
 
-/// Снимает окно приложения, с которым сейчас работает пользователь, без выбора мышью.
+/// Captures the window of the app the user is working in, without picking it with the mouse.
 pub fn capture_active_window(mtm: MainThreadMarker) {
     if !has_access(mtm) {
         return;
     }
     let pid = NSWorkspace::sharedWorkspace().frontmostApplication().map(|app| app.processIdentifier());
-    // Список окон идёт от переднего к заднему, первое окно приложения - активное.
+    // The window list goes front to back, the app's first window is the active one.
     match pid.and_then(|pid| overlay::on_screen_windows().into_iter().find(|w| w.pid == pid)) {
         Some(window) => capture_window(window.id),
         None => NSBeep(),
     }
 }
 
-/// Запас кадра вокруг окна в точках, больше самой широкой тени. В кадр впритык ScreenCaptureKit
-/// кладёт окно уменьшенным - с тенью всегда, без тени у полноэкранного окна на внешнем дисплее.
-/// Пустое поле срезает output::deliver.
+/// Frame margin around the window in points, larger than the widest shadow. In a tight frame ScreenCaptureKit
+/// scales the window down: always with a shadow, and without one for a full-screen window on an external display.
+/// output::deliver crops the empty margin.
 const WINDOW_MARGIN: f64 = 200.0;
 
-/// Снимает окно, с тенью или без по настройкам.
+/// Captures a window, with or without a shadow per settings.
 pub fn capture_window(window_id: CGWindowID) {
     with_content(move |content| {
         let Some(window) = unsafe { content.windows() }.iter().find(|w| unsafe { w.windowID() } == window_id) else {
@@ -195,7 +195,7 @@ pub fn capture_window(window_id: CGWindowID) {
         let padded = CGSize::new(frame.size.width + WINDOW_MARGIN, frame.size.height + WINDOW_MARGIN);
         set_output_size(&config, padded, scale);
         unsafe {
-            // Тень нужна, если за окном будет фон или прозрачность.
+            // The shadow is needed if there will be a background or transparency behind the window.
             config.setIgnoreShadowsSingleWindow(Settings::load().window_background == WindowBackground::Clean);
             config.setShowsCursor(shows_cursor(Kind::Window));
         }
@@ -206,7 +206,7 @@ pub fn capture_window(window_id: CGWindowID) {
     });
 }
 
-/// Снимает дисплеи целиком для лупы при выделении области. Снимки приходят на главный поток.
+/// Captures whole displays for the magnifier during area selection. Images arrive on the main thread.
 pub fn freeze_displays() {
     with_content(|content| {
         for display in &unsafe { content.displays() } {
@@ -218,7 +218,7 @@ pub fn freeze_displays() {
             unsafe { config.setShowsCursor(false) };
             let display_id = unsafe { display.displayID() };
             let handler = RcBlock::new(move |image: *mut CGImage, _error: *mut NSError| {
-                // SAFETY: ScreenCaptureKit отдаёт действительный снимок или null, а retain продлевает ему жизнь.
+                // SAFETY: ScreenCaptureKit returns a valid image or null, and retain extends its lifetime.
                 if let Some(image) = NonNull::new(image).map(|p| unsafe { CFRetained::retain(p) }) {
                     DispatchQueue::main().exec_async(move || overlay::show_frozen(display_id, image));
                 }
@@ -263,7 +263,7 @@ fn capture(pick: impl Fn(&SCDisplay) -> bool + 'static, region: Option<CGRect>, 
     });
 }
 
-/// Фильтр дисплея без окон самого Kadro: оверлей не попадает в снимок, даже если ещё не скрылся.
+/// Display filter without Kadro's own windows, so the overlay stays out of the screenshot even if it is not hidden yet.
 pub fn display_filter(content: &SCShareableContent, display: &SCDisplay) -> Retained<SCContentFilter> {
     let own_pid = own_pid();
     let own: Vec<_> =
@@ -278,7 +278,7 @@ pub fn display_filter(content: &SCShareableContent, display: &SCDisplay) -> Reta
     }
 }
 
-/// Размер снимка в пикселях: размер в точках, умноженный на плотность дисплея.
+/// Screenshot size in pixels: size in points multiplied by the display density.
 pub fn set_output_size(config: &SCStreamConfiguration, size: CGSize, scale: f64) {
     unsafe {
         config.setWidth(pixels(size.width, scale));
@@ -290,7 +290,7 @@ fn pixels(points: f64, scale: f64) -> usize {
     (points * scale).round() as usize
 }
 
-/// Идентификатор процесса Kadro в том виде, в каком его отдают AppKit и ScreenCaptureKit.
+/// Kadro process identifier in the form AppKit and ScreenCaptureKit report it.
 pub fn own_pid() -> i32 {
     std::process::id().cast_signed()
 }
@@ -309,7 +309,7 @@ pub fn with_content(f: impl Fn(&SCShareableContent) + 'static) {
             Some(content) => f(content),
             None => {
                 report(error);
-                // Доступ могли отозвать, пока Kadro работал.
+                // Permission may have been revoked while Kadro was running.
                 if !CGPreflightScreenCaptureAccess() {
                     DispatchQueue::main().exec_async(|| {
                         if let Some(mtm) = MainThreadMarker::new() {
@@ -333,7 +333,7 @@ fn shoot(filter: &SCContentFilter, config: &SCStreamConfiguration, scale: f64, s
     };
 }
 
-/// Область целиком лежит на дисплее этого размера. Отключённый дисплей имеет нулевой размер.
+/// The area lies entirely on a display of this size. A disconnected display has zero size.
 fn fits(rect: CGRect, display: CGSize) -> bool {
     rect.origin.x >= 0.0
         && rect.origin.y >= 0.0

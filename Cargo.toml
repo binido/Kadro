@@ -26,8 +26,8 @@ codegen-units = 1
 strip = true
 panic = "abort"
 
-# Набор линтов из https://github.com/apollographql/rust-best-practices:
-# явные приведения указателей, заимствование вместо лишних владений и единый стиль.
+# Lint set from https://github.com/apollographql/rust-best-practices:
+# explicit pointer casts, borrowing instead of needless ownership and a consistent style.
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 

@@ -1,9 +1,9 @@
-//! Мосты между Core Foundation и Foundation.
+//! Bridges between Core Foundation and Foundation.
 //!
-//! Многие типы Core Foundation и Foundation взаимозаменяемы без копирования (toll-free bridged):
-//! `CFArray` и `NSArray`, `CFDictionary` и `NSDictionary`, `CFString` и `NSString`,
-//! `CTFontDescriptor` и `NSFontDescriptor`. Здесь собраны такие приведения, чтобы условие
-//! их безопасности было записано в одном месте.
+//! Many Core Foundation and Foundation types are toll-free bridged:
+//! `CFArray` and `NSArray`, `CFDictionary` and `NSDictionary`, `CFString` and `NSString`,
+//! `CTFontDescriptor` and `NSFontDescriptor`. These casts live here so their safety
+//! condition is written down in one place.
 
 use std::ptr;
 
@@ -11,18 +11,18 @@ use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2_foundation::{NSDictionary, NSNumber, NSString};
 
-/// Смотрит на объект одного типа как на взаимозаменяемый с ним объект другого типа.
+/// Views an object of one type as the toll-free bridged object of another type.
 ///
 /// # Safety
 ///
-/// `T` и `U` должны быть парой toll-free bridged типов, а сам объект - действительно иметь тип `U`
-/// с точки зрения Objective-C. Время жизни результата не больше времени жизни `value`.
+/// `T` and `U` must be a toll-free bridged pair, and the object must really be of type `U`
+/// as far as Objective-C is concerned. The result does not outlive `value`.
 pub unsafe fn toll_free<T: ?Sized, U>(value: &T) -> &U {
-    // SAFETY: по условию функции под указателем лежит объект типа `U`, а время жизни сохраняется.
+    // SAFETY: by the function contract the pointer holds a `U` object, and the lifetime is preserved.
     unsafe { &*ptr::from_ref(value).cast::<U>() }
 }
 
-/// Число из словаря, который отдают Window Server или Carbon. `None`, если ключа нет или там не число.
+/// Number from a Window Server or Carbon dictionary. `None` if the key is missing or not a number.
 pub fn number(info: &NSDictionary<NSString, AnyObject>, key: &NSString) -> Option<Retained<NSNumber>> {
     info.objectForKey(key)?.downcast::<NSNumber>().ok()
 }

@@ -1,4 +1,4 @@
-//! Встроенные в бинарник ресурсы: шрифт Space Grotesk и иконки Lucide.
+//! Resources embedded in the binary: the Space Grotesk font and Lucide icons.
 
 use std::cell::OnceCell;
 
@@ -13,7 +13,7 @@ use objc2_foundation::{NSData, NSDictionary, NSNumber, NSString};
 use crate::bridge;
 
 const SPACE_GROTESK: &[u8] = include_bytes!("../assets/SpaceGrotesk.ttf");
-// Ось толщины 'wght' вариативного шрифта.
+// Weight axis 'wght' of the variable font.
 const WEIGHT_AXIS: u32 = u32::from_be_bytes(*b"wght");
 const REGULAR_WEIGHT: f64 = 400.0;
 const SEMIBOLD_WEIGHT: f64 = 600.0;
@@ -77,23 +77,23 @@ thread_local! {
     static FONT: OnceCell<Option<Retained<NSFontDescriptor>>> = const { OnceCell::new() };
 }
 
-/// Space Grotesk обычного начертания.
+/// Space Grotesk regular.
 pub fn font(size: f64) -> Retained<NSFont> {
     weighted_font(size, REGULAR_WEIGHT)
 }
 
-/// Space Grotesk полужирного начертания для заголовков.
+/// Space Grotesk semibold for headings.
 pub fn semibold_font(size: f64) -> Retained<NSFont> {
     weighted_font(size, SEMIBOLD_WEIGHT)
 }
 
-/// Возвращает системный шрифт, если файл шрифта не разобрался.
+/// Returns the system font if the font file fails to parse.
 fn weighted_font(size: f64, weight: f64) -> Retained<NSFont> {
     let base = FONT.with(|cell| {
         cell.get_or_init(|| {
             let data = CFData::from_static_bytes(SPACE_GROTESK);
             let descriptor = unsafe { CTFontManagerCreateFontDescriptorFromData(&data) }?;
-            // SAFETY: CTFontDescriptor и NSFontDescriptor взаимозаменяемы без копирования.
+            // SAFETY: CTFontDescriptor and NSFontDescriptor are toll-free bridged.
             let descriptor: &NSFontDescriptor = unsafe { bridge::toll_free::<CTFontDescriptor, _>(&descriptor) };
             Some(descriptor.retain())
         })
@@ -102,7 +102,7 @@ fn weighted_font(size: f64, weight: f64) -> Retained<NSFont> {
     let Some(base) = base else {
         return NSFont::systemFontOfSize(size);
     };
-    // Без явной толщины вариативный файл открывается начертанием Light.
+    // Without an explicit weight the variable file opens as Light.
     let axes = NSDictionary::from_slices(&[&*NSNumber::new_u32(WEIGHT_AXIS)], &[&*NSNumber::new_f64(weight)]);
     let attributes = NSDictionary::<NSString, AnyObject>::from_slices(
         &[unsafe { NSFontVariationAttribute }],
@@ -112,7 +112,7 @@ fn weighted_font(size: f64, weight: f64) -> Retained<NSFont> {
     NSFont::fontWithDescriptor_size(&descriptor, size).unwrap_or_else(|| NSFont::systemFontOfSize(size))
 }
 
-/// Иконка Lucide как шаблонное изображение, которое AppKit сам перекрашивает под тему.
+/// Lucide icon as a template image that AppKit recolors for the current appearance.
 pub fn icon(svg: &[u8], size: f64) -> Option<Retained<NSImage>> {
     let image = NSImage::initWithData(NSImage::alloc(), &NSData::with_bytes(svg))?;
     image.setSize(CGSize::new(size, size));
