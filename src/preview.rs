@@ -10,10 +10,11 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Bool, ProtocolObject, Sel};
 use objc2::{AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSBackingStoreType, NSBezelStyle, NSBezierPath, NSBox, NSBoxType, NSButton, NSColor, NSDragOperation,
-    NSDraggingContext, NSDraggingItem, NSDraggingSession, NSDraggingSource, NSEvent, NSEventMask,
-    NSFloatingWindowLevel, NSGraphicsContext, NSImage, NSImageView, NSPanel, NSResponder, NSScreen, NSStackView,
-    NSTextField, NSTrackingArea, NSTrackingAreaOptions, NSView, NSWindowCollectionBehavior, NSWindowStyleMask,
+    NSAppearance, NSAppearanceCustomization, NSAppearanceNameDarkAqua, NSBackingStoreType, NSBezelStyle, NSBezierPath,
+    NSBox, NSBoxType, NSButton, NSColor, NSDragOperation, NSDraggingContext, NSDraggingItem, NSDraggingSession,
+    NSDraggingSource, NSEvent, NSEventMask, NSFloatingWindowLevel, NSGraphicsContext, NSImage, NSImageView, NSPanel,
+    NSResponder, NSScreen, NSStackView, NSTextField, NSTrackingArea, NSTrackingAreaOptions, NSView,
+    NSWindowCollectionBehavior, NSWindowStyleMask,
 };
 use objc2_core_foundation::CFRetained;
 use objc2_core_graphics::{CGContext, CGImage};
@@ -33,6 +34,9 @@ use crate::{assets, editor, geometry, pin, recognize, settings, upload};
 const MAX_SIZE: NSSize = NSSize::new(220.0, 160.0);
 const MARGIN: f64 = 16.0;
 const BUTTON_SIZE: f64 = 28.0;
+/// Отступ кнопок от края миниатюры.
+const INSET: f64 = 6.0;
+const BUTTON_GAP: f64 = 8.0;
 const AUTO_HIDE_SECONDS: f64 = 6.0;
 const POPUP_SECONDS: f64 = 1.5;
 /// На сколько точек нужно сдвинуть мышь, чтобы клик стал перетаскиванием.
@@ -62,6 +66,8 @@ enum Dismissal {
 
 struct ThumbnailIvars {
     image: CFRetained<CGImage>,
+    /// Где рисуется снимок. У узкого или низкого снимка вокруг остаются тёмные поля под кнопки.
+    image_rect: NSRect,
     scale: f64,
     shot: Shot,
     /// Снимок уже скопирован, сохранён или перетащен.
@@ -91,8 +97,15 @@ define_class!(
             let shape = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(bounds, 10.0, 10.0);
             NSGraphicsContext::saveGraphicsState_class();
             shape.addClip();
+            NSColor::colorWithWhite_alpha(0.12, 0.95).setFill();
+            shape.fill();
             if let Some(context) = NSGraphicsContext::currentContext().map(|c| c.CGContext()) {
-                CGContext::draw_image(Some(&context), bounds, Some(&self.ivars().image));
+                CGContext::draw_image(Some(&context), self.ivars().image_rect, Some(&self.ivars().image));
+            }
+            // Затемнение под кнопками, иначе на светлом снимке их не видно.
+            if self.ivars().buttons.borrow().first().is_some_and(|b| !b.isHidden()) {
+                NSColor::colorWithWhite_alpha(0.0, 0.45).setFill();
+                shape.fill();
             }
             NSGraphicsContext::restoreGraphicsState_class();
             NSColor::colorWithWhite_alpha(1.0, 0.35).setStroke();
@@ -209,7 +222,7 @@ define_class!(
 );
 
 impl ThumbnailView {
-    fn new(mtm: MainThreadMarker, size: NSSize, ivars: ThumbnailIvars) -> Retained<Self> {
+    fn new(mtm: MainThreadMarker, size: NSSize, row: Vec<(&[u8], Sel)>, ivars: ThumbnailIvars) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(ivars);
         let this: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: NSRect::new(NSPoint::ZERO, size)] };
 
@@ -227,28 +240,14 @@ impl ThumbnailView {
         };
         this.addTrackingArea(&area);
 
-        let inset = 6.0;
-        let mut row = vec![
-            (assets::SQUARE_PEN, sel!(editImage:)),
-            (assets::COPY, sel!(copyImage:)),
-            (assets::SAVE, sel!(saveImage:)),
-            (assets::CLOUD_UPLOAD, sel!(uploadImage:)),
-            (assets::SCAN_TEXT, sel!(recognizeText:)),
-            (assets::PIN, sel!(pinImage:)),
-        ];
-        if !settings::upload_enabled() {
-            row.retain(|(icon, _)| *icon != assets::CLOUD_UPLOAD);
-        }
-        // Нижний ряд по центру с зазором в 8 точек.
-        let gap = 8.0;
-        let step = BUTTON_SIZE + gap;
-        let row_left = size.width / 2.0 - (row.len() as f64 * step - gap) / 2.0;
-        let close = (assets::X, sel!(closePreview:), NSPoint::new(inset, size.height - BUTTON_SIZE - inset));
+        let step = BUTTON_SIZE + BUTTON_GAP;
+        let row_left = size.width / 2.0 - row_width(row.len()) / 2.0;
+        let close = (assets::X, sel!(closePreview:), NSPoint::new(INSET, size.height - BUTTON_SIZE - INSET));
         let buttons: Vec<_> = std::iter::once(close)
             .chain(
                 row.into_iter()
                     .enumerate()
-                    .map(|(i, (icon, action))| (icon, action, NSPoint::new(row_left + i as f64 * step, inset))),
+                    .map(|(i, (icon, action))| (icon, action, NSPoint::new(row_left + i as f64 * step, INSET))),
             )
             .map(|(icon, action, origin)| this.add_button(mtm, icon, action, origin))
             .collect();
@@ -270,6 +269,7 @@ impl ThumbnailView {
         for button in self.ivars().buttons.borrow().iter() {
             button.setHidden(hidden);
         }
+        self.setNeedsDisplay(true);
     }
 
     /// Через несколько секунд без наведения прячет превью, если включено автоскрытие.
@@ -315,9 +315,15 @@ impl ThumbnailView {
 pub fn show(mtm: MainThreadMarker, image: CFRetained<CGImage>, scale: f64, shot: Shot, handled: bool) {
     dismiss(Dismissal::Expired);
     let auto_hide = Settings::load().preview_hiding == PreviewHiding::Auto;
-    let size = fit(
+    let image_size = fit(
         NSSize::new(CGImage::width(Some(&image)) as f64 / scale, CGImage::height(Some(&image)) as f64 / scale),
         MAX_SIZE,
+    );
+    let row = button_row();
+    let size = frame_size(image_size, row.len());
+    let image_rect = NSRect::new(
+        NSPoint::new((size.width - image_size.width) / 2.0, (size.height - image_size.height) / 2.0),
+        image_size,
     );
     let Some(screen) = screen_for(mtm, &shot) else {
         eprintln!("kadro: no display to show the preview on");
@@ -334,8 +340,11 @@ pub fn show(mtm: MainThreadMarker, image: CFRetained<CGImage>, scale: f64, shot:
     );
 
     let panel = floating_panel(mtm, frame);
+    // Кнопки поверх снимка всегда тёмные, независимо от темы системы.
+    panel.setAppearance(NSAppearance::appearanceNamed(unsafe { NSAppearanceNameDarkAqua }).as_deref());
     let ivars = ThumbnailIvars {
         image,
+        image_rect,
         scale,
         shot,
         handled: Cell::new(handled),
@@ -344,7 +353,7 @@ pub fn show(mtm: MainThreadMarker, image: CFRetained<CGImage>, scale: f64, shot:
         buttons: RefCell::new(Vec::new()),
         timer: RefCell::new(None),
     };
-    let view = ThumbnailView::new(mtm, size, ivars);
+    let view = ThumbnailView::new(mtm, size, row, ivars);
     panel.setContentView(Some(&view));
     panel.orderFrontRegardless();
 
@@ -518,6 +527,31 @@ pub fn to_cocoa(mtm: MainThreadMarker, global: NSRect) -> NSRect {
     NSRect::new(NSPoint::new(global.origin.x, primary_height - global.origin.y - global.size.height), global.size)
 }
 
+/// Кнопки нижнего ряда превью слева направо.
+fn button_row() -> Vec<(&'static [u8], Sel)> {
+    let mut row = vec![
+        (assets::SQUARE_PEN, sel!(editImage:)),
+        (assets::COPY, sel!(copyImage:)),
+        (assets::SAVE, sel!(saveImage:)),
+        (assets::CLOUD_UPLOAD, sel!(uploadImage:)),
+        (assets::SCAN_TEXT, sel!(recognizeText:)),
+        (assets::PIN, sel!(pinImage:)),
+    ];
+    if !settings::upload_enabled() {
+        row.retain(|(icon, _)| *icon != assets::CLOUD_UPLOAD);
+    }
+    row
+}
+
+fn row_width(buttons: usize) -> f64 {
+    buttons as f64 * (BUTTON_SIZE + BUTTON_GAP) - BUTTON_GAP
+}
+
+/// Размер превью - миниатюра, но не меньше, чем нужно кнопкам. Сверху крестик, снизу ряд.
+fn frame_size(image: NSSize, buttons: usize) -> NSSize {
+    NSSize::new(image.width.max(row_width(buttons) + 2.0 * INSET), image.height.max(2.0 * BUTTON_SIZE + 3.0 * INSET))
+}
+
 /// Вписывает размер снимка в предел, сохраняя пропорции. Маленькие снимки не растягиваются.
 fn fit(size: NSSize, limit: NSSize) -> NSSize {
     let ratio = (limit.width / size.width).min(limit.height / size.height).min(1.0);
@@ -542,5 +576,13 @@ mod tests {
         assert_eq!(fit(NSSize::new(400.0, 1200.0), MAX_SIZE), NSSize::new(53.0, 160.0));
         // маленький остаётся как есть
         assert_eq!(fit(NSSize::new(100.0, 60.0), MAX_SIZE), NSSize::new(100.0, 60.0));
+    }
+
+    #[test]
+    fn frame_fits_buttons_around_small_thumbnail() {
+        // узкий и низкий снимок раздвигается под ряд из 6 кнопок и крестик
+        assert_eq!(frame_size(NSSize::new(53.0, 40.0), 6), NSSize::new(220.0, 74.0));
+        // крупный остаётся размером миниатюры
+        assert_eq!(frame_size(NSSize::new(220.0, 92.0), 6), NSSize::new(220.0, 92.0));
     }
 }
