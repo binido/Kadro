@@ -3,6 +3,8 @@
 //! Recognition runs off the main thread and the result is shown on the main thread: a link from a code
 //! is offered to open, everything else is copied to the clipboard.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use objc2::{AnyThread, MainThreadMarker};
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSAlertSecondButtonReturn, NSApplication, NSBeep, NSPasteboard,
@@ -183,8 +185,11 @@ pub fn link(payload: &str) -> Option<&str> {
 pub fn recognize_and_show(image: objc2_core_foundation::CFRetained<CGImage>) {
     let settings = Settings::load();
     let language = settings.recognition_language.clone();
+    // A name per run, otherwise two recognitions at once would read each other's image.
+    static RUN: AtomicU64 = AtomicU64::new(0);
+    let run = RUN.fetch_add(1, Ordering::Relaxed);
     crate::output::in_background(move || {
-        let file = std::env::temp_dir().join("Kadro").join("recognize.png");
+        let file = std::env::temp_dir().join("Kadro").join(format!("recognize-{run}.png"));
         let written = std::fs::create_dir_all(file.parent().unwrap_or(&file))
             .and_then(|()| crate::output::write_to(&file, &image, 1.0));
         let found = match written {
@@ -194,6 +199,7 @@ pub fn recognize_and_show(image: objc2_core_foundation::CFRetained<CGImage>) {
                 Found::default()
             }
         };
+        let _ = std::fs::remove_file(&file);
         dispatch2::DispatchQueue::main().exec_async(move || {
             if let Some(mtm) = MainThreadMarker::new() {
                 show(mtm, &found, settings.single_line);
