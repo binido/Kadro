@@ -73,7 +73,14 @@ define_class!(
             let Some(field) = notification.object().and_then(|o| o.downcast::<NSTextField>().ok()) else { return };
             let value = field.stringValue().to_string();
             match field.identifier().map(|id| id.to_string()) {
-                Some(id) if id == upload::ACCESS_KEY || id == upload::SECRET_KEY => upload::set_secret(&id, value.trim()),
+                Some(id) if id == upload::ACCESS_KEY || id == upload::SECRET_KEY => {
+                    if let (Err(status), Some(label)) = (upload::set_secret(&id, value.trim()), self.ivars().test_status.get())
+                    {
+                        label.setStringValue(&NSString::from_str(&format!(
+                            "Couldn't save the key in the Keychain (error {status})."
+                        )));
+                    }
+                }
                 Some(key) => settings::set_string(&key, &value),
                 None => settings::set_string(settings::FILE_NAME_TEMPLATE, &value),
             }
@@ -240,6 +247,20 @@ define_class!(
         #[unsafe(method(toggleLibrary:))]
         fn toggle_library(&self, sender: &NSButton) {
             settings::set_flag(settings::LIBRARY, is_on(sender));
+        }
+
+        #[unsafe(method(clearLibrary:))]
+        fn clear_library(&self, _sender: &NSButton) {
+            let alert = NSAlert::new(self.mtm());
+            alert.setMessageText(ns_string!("Clear library data?"));
+            alert.setInformativeText(ns_string!(
+                "Kadro forgets the recognized text and thumbnails of all screenshots. The screenshot files stay where they are."
+            ));
+            alert.addButtonWithTitle(ns_string!("Clear"));
+            alert.addButtonWithTitle(ns_string!("Cancel"));
+            if alert.runModal() == NSAlertFirstButtonReturn {
+                crate::browser::clear_data();
+            }
         }
 
         #[unsafe(method(changeLibraryLimit:))]
@@ -750,6 +771,14 @@ fn saving_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView
     let library_on =
         checkbox(mtm, "Keep a library of saved screenshots", current.library, controller, sel!(toggleLibrary:));
     let library_limit = radios(mtm, current.library_limit, controller, sel!(changeLibraryLimit:));
+    let clear_library = unsafe {
+        NSButton::buttonWithTitle_target_action(
+            ns_string!("Clear Library Data…"),
+            Some(controller),
+            Some(sel!(clearLibrary:)),
+            mtm,
+        )
+    };
     let language = recognition_languages(mtm, current.recognition_language.as_deref(), controller);
     let single_line = checkbox(mtm, "Join lines into one", current.single_line, controller, sel!(toggleSingleLine:));
 
@@ -765,6 +794,7 @@ fn saving_tab(mtm: MainThreadMarker, controller: &Controller) -> Retained<NSView
             Row::Heading("Library"),
             Row::Field("", view(&library_on)),
             Row::Field("Remember up to", inline(mtm, &library_limit)),
+            Row::Field("", view(&clear_library)),
             Row::Heading("Text recognition"),
             Row::Wide("Language", view(&language)),
             Row::Field("", view(&single_line)),
