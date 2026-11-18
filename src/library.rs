@@ -199,6 +199,14 @@ pub fn prune() {
     });
 }
 
+/// Empties the index and its recognized text. Screenshot files stay, and only new ones are added later.
+pub fn clear() {
+    with_index(|index| {
+        index.entries.clear();
+        store(index);
+    });
+}
+
 /// Removes a screenshot from the index, for example after its file is deleted.
 pub fn forget(path: &Path) {
     with_index(|index| {
