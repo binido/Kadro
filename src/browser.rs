@@ -606,6 +606,15 @@ fn draw(browser: &Browser, width: f64, dirty: NSRect) {
     }
 }
 
+/// Deletes the library index with its recognized text and all cached thumbnails. Screenshot files stay.
+pub fn clear_data() {
+    library::clear();
+    let _ = std::fs::remove_dir_all(thumbnails_directory());
+    if let Some(browser) = BROWSER.with_borrow(Clone::clone) {
+        browser.reload();
+    }
+}
+
 /// Opens the library. On first open imports screenshots from the folder, on every open drops missing ones.
 pub fn show(mtm: MainThreadMarker) {
     let settings = Settings::load();

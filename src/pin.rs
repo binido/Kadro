@@ -269,6 +269,11 @@ pub fn remember(image: &CGImage, scale: f64, png: Option<&[u8]>) {
     }
 }
 
+/// Deletes the stored last screenshot. Otherwise a copy of the screen would stay in the temporary folder after quitting.
+pub fn forget_last() {
+    let _ = std::fs::remove_file(last_path());
+}
+
 pub fn remember_place(shot: Shot) {
     LAST_SHOT.set(Some(shot));
 }

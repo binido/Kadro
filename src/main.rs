@@ -112,6 +112,11 @@ define_class!(
             }
         }
 
+        #[unsafe(method(applicationWillTerminate:))]
+        fn will_terminate(&self, _notification: &NSNotification) {
+            pin::forget_last();
+        }
+
         // Launching Kadro again while it runs opens settings, which is the way in when the icon is hidden.
         #[unsafe(method(applicationShouldHandleReopen:hasVisibleWindows:))]
         fn should_handle_reopen(&self, _application: &NSApplication, _visible: bool) -> bool {
