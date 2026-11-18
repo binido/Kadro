@@ -38,8 +38,13 @@ unsafe extern "C" {
     static kSecMatchLimitOne: &'static CFString;
     fn SecItemCopyMatching(query: &CFDictionary, result: *mut *const c_void) -> i32;
     fn SecItemAdd(attributes: &CFDictionary, result: *mut *const c_void) -> i32;
+    fn SecItemUpdate(query: &CFDictionary, attributes: &CFDictionary) -> i32;
     fn SecItemDelete(query: &CFDictionary) -> i32;
+    fn SecRandomCopyBytes(rnd: *const c_void, count: usize, bytes: *mut u8) -> i32;
 }
+
+/// errSecItemNotFound.
+const ITEM_NOT_FOUND: i32 = -25300;
 
 /// Keychain query for the `account` item and extra fields.
 fn keychain_query(account: &str, extra: &[(&CFString, &CFType)]) -> CFRetained<CFDictionary<CFString, CFType>> {
@@ -73,21 +78,38 @@ pub fn secret(account: &str) -> Option<String> {
     String::from_utf8(data.to_vec()).ok()
 }
 
-/// Writes a secret to the Keychain. An empty value deletes the item.
-pub fn set_secret(account: &str, value: &str) {
-    // SAFETY: the dictionary lives until the end of the call.
-    unsafe { SecItemDelete(keychain_query(account, &[]).as_opaque()) };
+/// Writes a secret to the Keychain. An empty value deletes the item. The error is the Keychain status code.
+pub fn set_secret(account: &str, value: &str) -> Result<(), i32> {
+    let query = keychain_query(account, &[]);
     if value.is_empty() {
-        return;
+        // SAFETY: the dictionary lives until the end of the call.
+        let status = unsafe { SecItemDelete(query.as_opaque()) };
+        return if status == 0 || status == ITEM_NOT_FOUND { Ok(()) } else { Err(status) };
     }
     let data = CFData::from_bytes(value.as_bytes());
-    // SAFETY: the Security system constant lives for the whole process, the dictionary until the end of the call.
-    let status = unsafe {
-        SecItemAdd(keychain_query(account, &[(kSecValueData, data.as_ref())]).as_opaque(), std::ptr::null_mut())
-    };
+    // SAFETY: the Security system constant lives for the whole process.
+    let (key, value): (&CFString, &CFType) = unsafe { (kSecValueData, data.as_ref()) };
+    let changes = CFDictionary::<CFString, CFType>::from_slices(&[key], &[value]);
+    // Updated in place, so a failed write keeps the old key instead of leaving none.
+    // SAFETY: both dictionaries live until the end of the call.
+    let mut status = unsafe { SecItemUpdate(query.as_opaque(), changes.as_opaque()) };
+    if status == ITEM_NOT_FOUND {
+        // SAFETY: the dictionary lives until the end of the call.
+        status = unsafe { SecItemAdd(keychain_query(account, &[(key, value)]).as_opaque(), std::ptr::null_mut()) };
+    }
     if status != 0 {
         eprintln!("kadro: keychain refused to store the {account} ({status})");
+        return Err(status);
     }
+    Ok(())
+}
+
+/// Random hex with 96 bits of entropy, for object names nobody can guess.
+fn random_suffix() -> Result<String, String> {
+    let mut bytes = [0u8; 12];
+    // SAFETY: the buffer is 12 writable bytes, NULL means the default generator.
+    let status = unsafe { SecRandomCopyBytes(std::ptr::null(), bytes.len(), bytes.as_mut_ptr()) };
+    if status == 0 { Ok(sigv4::hex(&bytes)) } else { Err(format!("no random bytes for the file name ({status})")) }
 }
 
 /// Storage settings.
@@ -123,6 +145,37 @@ impl Storage {
 
     pub fn is_configured(&self) -> bool {
         !self.bucket.is_empty() && !self.access_key.is_empty() && !self.secret_key.is_empty()
+    }
+
+    /// What is wrong with the settings, if requests would go somewhere other than the storage
+    /// or in plain text. None if they are fine.
+    pub fn problem(&self) -> Option<String> {
+        // The bucket and region go into the host name, "/", "@" or "#" there would send the request to another host.
+        let plain = |text: &str, extra: &str| {
+            !text.is_empty() && text.chars().all(|c| c.is_ascii_alphanumeric() || extra.contains(c))
+        };
+        if !plain(&self.bucket, "-._") {
+            return Some("The bucket name can only have letters, digits, dots, dashes and underscores.".into());
+        }
+        if !plain(&self.region, "-") {
+            return Some("The region can only have letters, digits and dashes.".into());
+        }
+        if self.endpoint.is_empty() {
+            return None;
+        }
+        let (scheme, rest) = self.endpoint.split_once("://").unwrap_or(("https", &self.endpoint));
+        if rest.contains(['@', '?', '#']) {
+            return Some("The endpoint must be a plain address like https://s3.example.com.".into());
+        }
+        let host = rest.split('/').next().unwrap_or(rest);
+        let local = ["localhost", "127.0.0.1", "[::1]"]
+            .iter()
+            .any(|name| host == *name || host.strip_prefix(name).is_some_and(|port| port.starts_with(':')));
+        match scheme {
+            "https" => None,
+            "http" if local => None,
+            _ => Some("The endpoint must start with https://, plain http:// is allowed only for this Mac.".into()),
+        }
     }
 
     fn credentials(&self) -> Credentials<'_> {
@@ -188,6 +241,9 @@ impl Storage {
 
     /// Uploads an object. Returns the link per settings.
     pub fn put(&self, name: &str, body: &[u8], content_type: &str) -> Result<Option<String>, String> {
+        if let Some(problem) = self.problem() {
+            return Err(problem);
+        }
         let key = self.key(name);
         let now = unix_now();
         let (url, headers) = self.request("PUT", &key, body, Some(content_type), now);
@@ -197,6 +253,9 @@ impl Storage {
 
     /// Uploads and deletes a small file, which checks the keys, bucket and write permission.
     pub fn test(&self) -> Result<(), String> {
+        if let Some(problem) = self.problem() {
+            return Err(problem);
+        }
         let key = self.key(".kadro-test");
         let (url, headers) = self.request("PUT", &key, b"Kadro", Some("text/plain"), unix_now());
         send("PUT", &url, &headers, b"Kadro")?;
@@ -283,7 +342,9 @@ pub fn upload(mtm: MainThreadMarker, image: CFRetained<CGImage>, scale: f64, sho
         let result = output::encoded(&image, scale, shot.as_ref(), None).map_err(|err| err.to_string()).and_then(
             |(bytes, name, format)| {
                 let extension = format.extension();
-                storage.put(&format!("{name}.{extension}"), &bytes, mime(extension))
+                // Names are the capture time to the second, so in a public bucket they could be guessed.
+                let name = format!("{name} {}.{extension}", random_suffix()?);
+                storage.put(&name, &bytes, mime(extension))
             },
         );
         DispatchQueue::main().exec_async(move || {
@@ -393,6 +454,33 @@ mod tests {
                 .starts_with("AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/auto/s3/aws4_request,")
         );
         assert!(authorization.contains("SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date,"));
+    }
+
+    #[test]
+    fn settings_that_would_redirect_or_expose_requests_are_refused() {
+        assert_eq!(storage("", LinkKind::None, "").problem(), None);
+        assert_eq!(storage("https://acc.r2.cloudflarestorage.com", LinkKind::None, "").problem(), None);
+        assert_eq!(storage("http://127.0.0.1:9000", LinkKind::None, "").problem(), None);
+        assert_eq!(storage("http://localhost", LinkKind::None, "").problem(), None);
+        // cleartext to another machine
+        assert!(storage("http://s3.example.com", LinkKind::None, "").problem().is_some());
+        assert!(storage("http://localhost.evil.com", LinkKind::None, "").problem().is_some());
+        assert!(storage("https://user@evil.com", LinkKind::None, "").problem().is_some());
+        // the bucket would become part of the host
+        let aws = |bucket: &str| Storage { bucket: bucket.into(), ..storage("", LinkKind::None, "") };
+        assert!(aws("evil.com/x").problem().is_some());
+        assert!(aws("evil.com#").problem().is_some());
+        assert!(aws("").problem().is_some());
+        let region = Storage { region: "x.evil.com/".into(), ..storage("", LinkKind::None, "") };
+        assert!(region.problem().is_some());
+    }
+
+    #[test]
+    fn upload_names_get_unguessable_suffixes() {
+        let (a, b) = (random_suffix().unwrap(), random_suffix().unwrap());
+        assert_eq!(a.len(), 24);
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(a, b);
     }
 
     #[test]
