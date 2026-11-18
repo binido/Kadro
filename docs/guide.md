@@ -79,7 +79,7 @@ App:
 
 ## Links
 
-`kadro://` links let other apps, scripts and Shortcuts drive Kadro. They are off by default; in Settings → General → Advanced they can be turned on and allowed or set to ask before every link.
+`kadro://` links let other apps, scripts and Shortcuts drive Kadro. They are off by default; in Settings → General → Advanced they can be turned on and allowed or set to ask before every link. Links that capture or upload without a selection step (full screen, delayed, active window, repeat last region, upload) always ask, because any web page can open a link. The prompt says what the link will do. Capture links take no parameters.
 
 | Link | What it does |
 |---|---|
@@ -100,7 +100,7 @@ App:
 | `kadro://settings` | Open Settings |
 | `kadro://set?key=value&…` | Change settings |
 
-Settings that `kadro://set` accepts: `format` (`png`, `jpeg`, `heic`, `auto`), `cursor` (`auto`, `show`, `hide`), `after` (`preview`, `editor`, `nothing`), `hide-preview` (`auto`, `manual`), `window` (`clean`, `shadow`, `wallpaper`, `color`), `copy` and `save` (`on`, `off`), `folder` (an absolute path). Every value is checked before anything changes, for example `kadro://set?format=png&copy=on&save=off`.
+Settings that `kadro://set` accepts: `format` (`png`, `jpeg`, `heic`, `auto`), `cursor` (`auto`, `show`, `hide`), `after` (`preview`, `editor`, `nothing`), `hide-preview` (`auto`, `manual`), `window` (`clean`, `shadow`, `wallpaper`, `color`), `copy` and `save` (`on`, `off`), `folder` (an existing folder inside your home folder that other accounts can't open, such as `~/Desktop`; set any other folder in Settings). Every value is checked before anything changes, for example `kadro://set?format=png&copy=on&save=off`.
 
 ## UI
 
