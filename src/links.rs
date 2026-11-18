@@ -2,9 +2,10 @@
 //! opening files and some settings.
 //!
 //! Links are off by default. When on, they run right away or after a prompt, as chosen
-//! in settings, because any app or web page can open a link.
+//! in settings, because any app or web page can open a link. Silent captures and upload always ask.
 
-use std::path::PathBuf;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSAlert, NSAlertFirstButtonReturn, NSApplication};
@@ -27,6 +28,36 @@ pub enum Command {
     Settings,
     /// Settings key and value pairs, already validated.
     Set(Vec<(&'static str, String)>),
+}
+
+impl Command {
+    /// Whether the command captures or uploads with no further step from the user.
+    fn is_silent(&self) -> bool {
+        matches!(
+            self,
+            Command::Run(
+                Action::Screen
+                    | Action::DelayedScreen
+                    | Action::ActiveWindow
+                    | Action::RepeatRegion
+                    | Action::UploadLast
+            )
+        )
+    }
+
+    /// What the command does, in words for the prompt. Paths and values are already decoded.
+    fn describe(&self) -> String {
+        match self {
+            Command::Run(action) => action.title().to_string(),
+            Command::Open(path) => format!("Open {} in the editor", path.display()),
+            Command::Clipboard => "Open the image on the clipboard in the editor".into(),
+            Command::Settings => "Open Settings".into(),
+            Command::Set(pairs) => {
+                let changes: Vec<_> = pairs.iter().map(|(key, value)| format!("{key} = {value}")).collect();
+                format!("Change settings: {}", changes.join(", "))
+            }
+        }
+    }
 }
 
 /// Link paths and the actions they run. The same list is in docs/guide.md.
@@ -62,6 +93,10 @@ pub fn parse(url: &str) -> Result<Command, String> {
         })
         .collect();
     if let Some((_, action)) = ROUTES.iter().find(|(route, _)| *route == path) {
+        // Otherwise text in an ignored query could make the prompt look harmless.
+        if !pairs.is_empty() {
+            return Err(format!("{SCHEME}://{path} takes no parameters"));
+        }
         return Ok(Command::Run(*action));
     }
     match path {
@@ -102,10 +137,24 @@ fn setting(key: &str, value: &str) -> Result<(&'static str, String), String> {
         "window" => choice::<WindowBackground>(value),
         "copy" => flag(settings::COPY_TO_CLIPBOARD),
         "save" => flag(settings::SAVE_TO_FILE),
-        "folder" if value.starts_with('/') => Ok((settings::DIRECTORY, value.to_string())),
-        "folder" => Err("folder needs an absolute path".into()),
+        "folder" => {
+            let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
+            private_folder(Path::new(value), &home)
+                .map(|folder| (settings::DIRECTORY, folder.to_string_lossy().into_owned()))
+                .ok_or_else(|| "folder must be an existing folder in your home folder that only you can open".into())
+        }
         _ => Err(format!("{key} can't be set from a link")),
     }
+}
+
+/// The resolved folder if a link may send screenshots there: it exists, lies inside `home`
+/// and gives other accounts no access.
+fn private_folder(folder: &Path, home: &Path) -> Option<PathBuf> {
+    // Resolved so ".." and symlinks can't lead outside the home folder.
+    let folder = folder.canonicalize().ok()?;
+    let metadata = std::fs::metadata(&folder).ok()?;
+    let private = metadata.is_dir() && metadata.permissions().mode() & 0o077 == 0;
+    (private && folder.starts_with(home.canonicalize().ok()?)).then_some(folder)
 }
 
 /// Decodes `%XX` and `+` in a query string. An invalid sequence is kept as is.
@@ -153,10 +202,11 @@ pub fn handle(mtm: MainThreadMarker, url: &str) {
         }
         return;
     }
-    if settings.links == LinkPolicy::Ask {
+    // A capture or upload with no selection step is asked about even in Allow mode, because any page can open a link.
+    if settings.links == LinkPolicy::Ask || command.is_silent() {
         let alert = NSAlert::new(mtm);
         alert.setMessageText(ns_string!("Follow this Kadro link?"));
-        alert.setInformativeText(&NSString::from_str(url));
+        alert.setInformativeText(&NSString::from_str(&format!("{}.\n\nLink: {url}", command.describe())));
         alert.addButtonWithTitle(ns_string!("Allow"));
         alert.addButtonWithTitle(ns_string!("Cancel"));
         NSApplication::sharedApplication(mtm).activate();
@@ -223,18 +273,58 @@ mod tests {
     #[test]
     fn set_checks_every_value_before_changing_anything() {
         assert_eq!(
-            parse("kadro://set?format=jpeg&copy=off&after=editor&folder=%2Ftmp%2Fshots"),
+            parse("kadro://set?format=jpeg&copy=off&after=editor"),
             Ok(Command::Set(vec![
                 ("format", "jpeg".into()),
                 (settings::COPY_TO_CLIPBOARD, "false".into()),
                 ("afterCapture", "editor".into()),
-                (settings::DIRECTORY, "/tmp/shots".into()),
             ]))
         );
+        assert!(parse("kadro://set?format=jpeg&folder=%2Ftmp").is_err());
+        assert!(parse("kadro://set?folder=%2FUsers%2FShared").is_err());
         assert!(parse("kadro://set?format=bmp").unwrap_err().contains("png, jpeg, heic, auto"));
         assert!(parse("kadro://set?copy=maybe").is_err());
         assert!(parse("kadro://set?secret=1").unwrap_err().contains("can't be set"));
         assert!(parse("kadro://set").is_err());
+    }
+
+    #[test]
+    fn folder_from_a_link_must_be_private_and_inside_home() {
+        let root = std::env::temp_dir().join(format!("kadro-links-{}", std::process::id()));
+        let home = root.join("home");
+        let private = home.join("Shots");
+        let open = home.join("Public");
+        std::fs::create_dir_all(&private).unwrap();
+        std::fs::create_dir_all(&open).unwrap();
+        std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert_eq!(private_folder(&private, &home), Some(private.canonicalize().unwrap()));
+        // readable by other accounts
+        assert_eq!(private_folder(&open, &home), None);
+        // outside home, even through ".."
+        assert_eq!(private_folder(&private.join("../../.."), &home), None);
+        assert_eq!(private_folder(&home.join("missing"), &home), None);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn routes_refuse_parameters_and_silent_captures_are_marked() {
+        assert!(parse("kadro://upload?note=nothing%20leaves%20this%20Mac").unwrap_err().contains("no parameters"));
+        assert!(parse("kadro://capture/screen").unwrap().is_silent());
+        assert!(parse("kadro://upload").unwrap().is_silent());
+        assert!(!parse("kadro://capture/region").unwrap().is_silent());
+        assert!(!parse("kadro://settings").unwrap().is_silent());
+    }
+
+    #[test]
+    fn prompt_text_shows_decoded_values() {
+        assert_eq!(parse("kadro://capture/screen").unwrap().describe(), "Capture Full Screen");
+        assert_eq!(
+            parse("kadro://open?path=%2Ftmp%2FShot%201.png").unwrap().describe(),
+            "Open /tmp/Shot 1.png in the editor"
+        );
+        assert_eq!(parse("kadro://set?copy=off").unwrap().describe(), "Change settings: copyToClipboard = false");
     }
 
     #[test]

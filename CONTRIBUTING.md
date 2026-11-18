@@ -93,7 +93,8 @@ Actions are listed once in `Action` in `src/hotkeys.rs`. To add one:
 2. Fill in `title`, `run`, `defaults_key` and `default_shortcut` (usually `None`).
 3. Give it an icon in `src/main.rs` and place it in the menu built there.
 4. If it should be reachable from `kadro://` links, add it to `ROUTES` in `src/links.rs` and
-   to the link table in [docs/guide.md](docs/guide.md).
+   to the link table in [docs/guide.md](docs/guide.md). An action that captures or uploads without
+   a selection step also goes into `Command::is_silent`, so a link always asks before running it.
 
 ## Check your change
 
