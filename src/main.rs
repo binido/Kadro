@@ -93,6 +93,10 @@ define_class!(
             self.install_status_item();
             hotkeys::install();
             updates::check_on_launch();
+            // Otherwise text of screenshots deleted in Finder stays in the index until the library window opens.
+            if library::exists() {
+                output::in_background(library::prune);
+            }
         }
 
         // Images opened with Kadro from Finder or dropped on its icon, and kadro:// links.
