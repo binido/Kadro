@@ -28,7 +28,8 @@ Editor:
 - Zoom with pinch or ⌘ + scroll (or the plain scroll wheel, if chosen), ⌘+ / ⌘− / ⌘0 (100%) / ⌘9 (fit), or the toolbar. 100% is one image pixel per screen pixel.
 - Crop (C or the toolbar, drag, Return), Uncrop to bring back everything cropped away, and Resize with a locked aspect ratio.
 - Annotations from the tool column on the left or a single key: Select (V), Arrow (A), Line (L), Rectangle (R), Oval (O), Pen (P), Highlighter (H), Text (T), Counter (N), Blur (B), Pixelate (X), Spotlight (S) and Magnifier (M).
-- Arrows with a filled or open head or heads on both ends, solid or dashed lines, outlined, rounded or filled rectangles, outlined or filled ovals, text plain or on a background, numbered counters that renumber when one is removed, blur and pixelate in three strengths, spotlights that dim everything outside rectangles or ellipses, and a 2×, 3× or 4× circular magnifier.
+- Arrows with a filled or open head or heads on both ends, solid or dashed lines, outlined, rounded or filled rectangles, outlined or filled ovals, text plain or on a background, numbered counters that renumber when one is removed, blur in three strengths, pixelate in three strengths or Solid, spotlights that dim everything outside rectangles or ellipses, and a 2×, 3× or 4× circular magnifier.
+- To hide passwords and other secrets, use Pixelate → Solid or a filled rectangle. Blurred or pixelated text can sometimes be rebuilt. With saving on, the screenshot is saved before it opens in the editor, so the unedited original stays in the folder too.
 - Colour, size and style in the toolbar apply to the next annotation and to the selected one. Every annotation can be selected, moved by its body, reshaped by its ends or corners, restyled and deleted (Delete) until Rasterize flattens them into the image. Double-click a text to edit it.
 - Ruler (U): drag to measure, or click to measure the plain area under the pointer from edge to edge, across and along. Lengths show in pixels or points.
 - Color Picker (I): a box next to the pointer shows the colour under it, and a click copies it as HEX, RGB or HSL (sRGB).
@@ -47,7 +48,7 @@ Text and codes:
 Upload:
 
 - Upload is off until it is turned on in Settings → General → Advanced. Until then the Upload tab and every Upload button stay hidden.
-- Upload a screenshot from the preview, the editor or the menu (More → Upload Last Screenshot) to any S3-compatible storage: Amazon S3, Cloudflare R2, Backblaze B2, MinIO and others. When the upload finishes, the link is on the clipboard.
+- Upload a screenshot from the preview, the editor or the menu (More → Upload Last Screenshot) to any S3-compatible storage: Amazon S3, Cloudflare R2, Backblaze B2, MinIO and others. When the upload finishes, the link is on the clipboard. The file name gets a random part, so links to a public bucket can't be guessed from the time.
 - The link is temporary (1 hour, 1 day or 7 days), public (the bucket's address or your own domain), or none.
 - Requests are signed with AWS Signature V4 by Kadro itself, with no SDK. The access and secret keys are kept in the Keychain. Test Connection uploads and deletes a small file to check the keys, the bucket and write access.
 
@@ -56,7 +57,7 @@ Library:
 - The Library window (menu or shortcut) shows screenshots saved by Kadro as small, medium or large tiles or as a list. On first open it also brings in the images already in the screenshots folder.
 - Search by name, date and the text on the screenshot. The text is recognized in the background, offline.
 - Double-click or Return opens a screenshot in the editor; the context menu also has Copy, Show in Finder, Upload and Move to Trash.
-- The index is a small file in Application Support and thumbnails are cached, so thousands of screenshots open at once. Text recognition runs in a separate short-lived process, so Kadro's own memory stays low.
+- The index is a small file in Application Support and thumbnails are cached, so thousands of screenshots open at once. The recognized text is stored as plain text, and Settings → Saving → Clear Library Data… removes it together with the thumbnails. Text recognition runs in a separate short-lived process, so Kadro's own memory stays low.
 
 Pinned screenshots:
 
@@ -128,7 +129,7 @@ A compact native preferences window uses Space Grotesk typography and Lucide ico
 **Saving**
 
 - Screenshots folder, file name template, save format, Retina downscaling
-- Library on or off, how many screenshots it remembers
+- Library on or off, how many screenshots it remembers, clearing its text and thumbnails
 - Text recognition language, joining recognized lines into one
 
 **Editor**
@@ -140,7 +141,7 @@ A compact native preferences window uses Space Grotesk typography and Lucide ico
 
 **Upload** (shown when upload is on)
 
-- Endpoint, region, bucket, path prefix
+- Endpoint, region, bucket, path prefix. The endpoint must use https://, plain http:// works only for storage on this Mac
 - Access key and secret key, stored in the Keychain
 - Link to copy after upload: none, temporary (1 hour, 1 day, 7 days), public with an optional custom address
 - Test Connection

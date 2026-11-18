@@ -93,7 +93,8 @@ Updates are downloaded and installed manually.
 ## Privacy and sharing
 
 Capture, editing and Apple Vision text recognition run locally. Library text indexing also stays
-on your Mac. The update check contacts GitHub; it can be disabled.
+on your Mac. The recognized text is kept as plain text in Application Support until you clear it
+in Settings. The update check contacts GitHub; it can be disabled.
 
 Uploading is optional and sends the selected screenshot to the S3-compatible storage you configure.
 Access keys are stored in macOS Keychain. Choose a temporary link, a public link or no link;
