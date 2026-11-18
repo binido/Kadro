@@ -295,9 +295,13 @@ impl Browser {
     }
 
     fn selected_path(&self) -> Option<PathBuf> {
+        self.selected_entry().map(|entry| entry.path)
+    }
+
+    fn selected_entry(&self) -> Option<library::Entry> {
         let index = self.ivars().selected.get()?;
         let item = *self.ivars().shown.borrow().get(index)?;
-        self.ivars().items.borrow().get(item).map(|i| i.entry.path.clone())
+        self.ivars().items.borrow().get(item).map(|i| i.entry.clone())
     }
 
     fn selected_image(&self) -> Option<(CFRetained<CGImage>, f64)> {
@@ -306,11 +310,12 @@ impl Browser {
 
     /// Moves the selected screenshot to the Trash. It can be restored from there, so there is no prompt.
     fn trash(&self) {
-        let Some(path) = self.selected_path() else { return };
+        let Some(library::Entry { path, modified, .. }) = self.selected_entry() else { return };
         let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
         match NSFileManager::defaultManager().trashItemAtURL_resultingItemURL_error(&url, None) {
             Ok(()) => {
                 library::forget(&path);
+                let _ = std::fs::remove_file(thumbnail_cache(&path, modified));
                 self.reload();
             }
             Err(err) => {
@@ -376,11 +381,16 @@ fn thumbnails_directory() -> PathBuf {
     home.join("Library/Caches/Kadro/Thumbnails")
 }
 
+/// Thumbnail file in the cache for this path and modification time.
+fn thumbnail_cache(path: &Path, modified: u64) -> PathBuf {
+    let key = sigv4::hex(&sigv4::sha256(format!("{}|{modified}", path.display()).as_bytes()));
+    thumbnails_directory().join(format!("{}.jpg", &key[..24]))
+}
+
 /// Thumbnail from disk, or a new one that goes straight into the cache. The cache name depends on the path
 /// and modification time, so a changed file gets a new thumbnail.
 fn cached_thumbnail(path: &Path, modified: u64) -> Option<CFRetained<CGImage>> {
-    let key = sigv4::hex(&sigv4::sha256(format!("{}|{modified}", path.display()).as_bytes()));
-    let cache = thumbnails_directory().join(format!("{}.jpg", &key[..24]));
+    let cache = thumbnail_cache(path, modified);
     if let Some((image, _)) = std::fs::read(&cache).ok().and_then(|bytes| output::decode(&bytes)) {
         return Some(image);
     }

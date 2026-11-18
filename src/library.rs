@@ -86,6 +86,8 @@ impl Index {
 
     /// Adds screenshots that are not there yet and drops the oldest beyond `limit`.
     pub fn add(&mut self, files: impl IntoIterator<Item = (PathBuf, u64)>, limit: usize) {
+        // Tabs and line breaks separate index fields, a file name with them would turn into forged entries.
+        let files = files.into_iter().filter(|(path, _)| !path.to_string_lossy().chars().any(char::is_control));
         for (path, modified) in files {
             match self.entries.iter_mut().find(|e| e.path == path) {
                 // The file was overwritten, its text has to be recognized again.
@@ -272,6 +274,16 @@ mod tests {
         index.add([], 2);
         let names: Vec<_> = index.entries.iter().map(Entry::name).collect();
         assert_eq!(names, ["1", "2"]);
+    }
+
+    #[test]
+    fn names_with_field_separators_stay_out_of_the_index() {
+        let mut index = Index::default();
+        let forged = "/a/x.png\t1\t1\tfake\n/Users/me/private.png\t9999999999\t0\t.png";
+        index.add([(PathBuf::from(forged), 1), (PathBuf::from("/a/ok.png"), 2)], 10);
+        let reloaded = Index::parse(&index.serialize());
+        assert_eq!(reloaded.entries.len(), 1);
+        assert_eq!(reloaded.entries[0].path, PathBuf::from("/a/ok.png"));
     }
 
     #[test]
