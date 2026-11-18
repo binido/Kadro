@@ -1958,7 +1958,7 @@ pub fn open_last(mtm: MainThreadMarker) {
 
 /// Opens an image from a file.
 pub fn open_file(mtm: MainThreadMarker, path: &Path) {
-    let decoded = std::fs::read(path).ok().and_then(|bytes| output::decode(&bytes));
+    let decoded = read_image_file(path).ok().and_then(|bytes| output::decode(&bytes));
     let Some((image, scale)) = decoded else {
         let alert = NSAlert::new(mtm);
         alert.setMessageText(ns_string!("Couldn't open the image"));
@@ -1968,6 +1968,19 @@ pub fn open_file(mtm: MainThreadMarker, path: &Path) {
     };
     let title = path.file_stem().map_or_else(|| "Image".into(), |s| s.to_string_lossy().into_owned());
     open(mtm, image, scale, None, &title);
+}
+
+/// Largest image file the editor reads.
+const MAX_FILE_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Bytes of a regular file up to [`MAX_FILE_BYTES`]. Paths come from links too, and reading
+/// a FIFO or `/dev/zero` would never finish.
+fn read_image_file(path: &Path) -> std::io::Result<Vec<u8>> {
+    let metadata = std::fs::metadata(path)?;
+    if !metadata.is_file() || metadata.len() > MAX_FILE_BYTES {
+        return Err(std::io::Error::other("not an image file"));
+    }
+    std::fs::read(path)
 }
 
 /// Asks to pick an image and opens it.
@@ -1994,5 +2007,26 @@ pub fn open_clipboard(mtm: MainThreadMarker) {
     match decoded {
         Some((image, scale)) => open(mtm, image, scale, None, "Clipboard"),
         None => NSBeep(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_regular_files_are_read() {
+        let dir = std::env::temp_dir().join(format!("kadro-open-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fifo = dir.join("shot.png");
+        assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+        let file = dir.join("real.png");
+        std::fs::write(&file, b"png").unwrap();
+
+        assert!(read_image_file(&fifo).is_err());
+        assert!(read_image_file(Path::new("/dev/zero")).is_err());
+        assert!(read_image_file(&dir).is_err());
+        assert_eq!(read_image_file(&file).unwrap(), b"png");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
