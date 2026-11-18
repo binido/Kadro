@@ -5,7 +5,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-cargo build --release
+cargo build --release --locked
 target_dir=$(cargo metadata --format-version 1 --no-deps | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
 app=build/Kadro.app
