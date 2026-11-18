@@ -292,10 +292,12 @@ impl ThumbnailView {
     /// Drags the screenshot as a file. The file is written to a temporary folder when the drag starts.
     fn start_drag(&self, event: &NSEvent) {
         let ivars = self.ivars();
-        let directory = std::env::temp_dir().join("Kadro");
+        let directory = std::env::temp_dir().join("Kadro").join("Drag");
+        // The drop target has copied the previous file by now. Otherwise every drag would leave a full copy behind.
+        let _ = std::fs::remove_dir_all(&directory);
         // ponytail: encoding runs on the main thread, on a 5K screenshot that is a noticeable pause at drag start.
         // If it gets in the way, write the file in the background right after the preview is shown.
-        let path = match output::save(&directory, &ivars.image, ivars.scale, Some(&ivars.shot), None) {
+        let path = match output::save_unindexed(&directory, &ivars.image, ivars.scale, Some(&ivars.shot), None) {
             Ok(path) => path,
             Err(err) => return eprintln!("kadro: failed to prepare dragged file: {err}"),
         };

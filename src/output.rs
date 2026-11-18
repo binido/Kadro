@@ -2,6 +2,8 @@
 
 use std::collections::HashSet;
 use std::ffi::{CString, c_char, c_int, c_void};
+use std::fs::{File, OpenOptions};
+use std::io::{ErrorKind, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -182,14 +184,26 @@ pub fn save(
     shot: Option<&Shot>,
     png: Option<&[u8]>,
 ) -> std::io::Result<PathBuf> {
+    let path = save_unindexed(directory, image, scale, shot, png)?;
+    library::add(&path);
+    Ok(path)
+}
+
+/// Saves like [`save`], but keeps the file out of the library.
+pub fn save_unindexed(
+    directory: &Path,
+    image: &CGImage,
+    scale: f64,
+    shot: Option<&Shot>,
+    png: Option<&[u8]>,
+) -> std::io::Result<PathBuf> {
     let (bytes, name, format) = encoded(image, scale, shot, png)?;
     std::fs::create_dir_all(directory)?;
-    let path = unique_path(directory, &name, format.extension());
-    std::fs::write(&path, bytes)?;
+    let (path, mut file) = create_unique(directory, &name, format.extension())?;
+    file.write_all(&bytes)?;
     if let Some(shot) = shot {
         mark_as_screenshot(&path, shot);
     }
-    library::add(&path);
     Ok(path)
 }
 
@@ -343,15 +357,21 @@ fn file_name(template: &str, date: &str, time: &str, mode: &str, app: &str) -> S
     if name.is_empty() || name.starts_with('.') { render(DEFAULT_FILE_NAME_TEMPLATE) } else { name }
 }
 
-/// Picks a free file name, adding a number on collision.
-fn unique_path(directory: &Path, name: &str, extension: &str) -> PathBuf {
+/// Creates a new file under a free name, adding a number on collision.
+fn create_unique(directory: &Path, name: &str, extension: &str) -> std::io::Result<(PathBuf, File)> {
     let mut path = directory.join(format!("{name}.{extension}"));
     let mut n = 2;
-    while path.exists() {
-        path = directory.join(format!("{name} ({n}).{extension}"));
-        n += 1;
+    loop {
+        // create_new fails on any existing name, a dangling symlink included. Otherwise another account
+        // could plant a link under the next screenshot name in a shared folder and have the write go to its target.
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => {
+                path = directory.join(format!("{name} ({n}).{extension}"));
+                n += 1;
+            }
+            result => return result.map(|file| (path, file)),
+        }
     }
-    path
 }
 
 /// Marks the file as a screenshot, like the system screencapture does,
@@ -426,13 +446,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn unique_path_skips_taken_names() {
+    fn create_unique_skips_taken_names() {
         let dir = std::env::temp_dir().join(format!("kadro-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let first = unique_path(&dir, "Kadro t", "png");
+        let (first, _) = create_unique(&dir, "Kadro t", "png").unwrap();
         assert_eq!(first, dir.join("Kadro t.png"));
-        std::fs::write(&first, b"").unwrap();
-        assert_eq!(unique_path(&dir, "Kadro t", "png"), dir.join("Kadro t (2).png"));
+        assert_eq!(create_unique(&dir, "Kadro t", "png").unwrap().0, dir.join("Kadro t (2).png"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn create_unique_does_not_write_through_a_planted_symlink() {
+        let dir = std::env::temp_dir().join(format!("kadro-symlink-{}", std::process::id()));
+        let target = dir.join("victim.txt");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::os::unix::fs::symlink(&target, dir.join("Kadro t.png")).unwrap();
+        let (path, mut file) = create_unique(&dir, "Kadro t", "png").unwrap();
+        file.write_all(b"png").unwrap();
+        assert_eq!(path, dir.join("Kadro t (2).png"));
+        assert!(!target.exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
