@@ -21,7 +21,7 @@ use objc2_core_graphics::{
 use objc2_core_image::{CIContext, CIImage};
 use objc2_foundation::{NSDictionary, NSPoint, NSRect, NSSize, NSString};
 
-use crate::annotation::{Annotation, Color, Point, Tool, counter_number};
+use crate::annotation::{Annotation, Color, Point, SOLID_PIXELATE, Tool, counter_number};
 use crate::document::Doc;
 use crate::{measure, output};
 
@@ -410,7 +410,8 @@ fn dashed_outline(annotation: &Annotation, scale: f64) {
 
 /// Blur and pixelation strength in points for the Light, Medium and Strong variants.
 fn strength(style: usize) -> f64 {
-    [6.0, 12.0, 24.0][style.min(2)]
+    // Text under cells smaller than about 10 points can be rebuilt by matching known fonts.
+    [10.0, 16.0, 24.0][style.min(2)]
 }
 
 /// Draws an image into a rectangle, accounting for the flipped context.
@@ -464,8 +465,11 @@ fn blur(source: &CGImage, origin: Point, annotation: &Annotation, scale: f64) {
 fn pixelate(source: &CGImage, origin: Point, annotation: &Annotation, scale: f64) {
     let Some((pixels, rect)) = region(source, origin, ns_rect(annotation)) else { return };
     let cell = (strength(annotation.style) * scale).max(1.0);
-    let (columns, rows) =
-        ((rect.size.width / cell).ceil().max(1.0) as usize, (rect.size.height / cell).ceil().max(1.0) as usize);
+    let (columns, rows) = if annotation.style == SOLID_PIXELATE {
+        (1, 1)
+    } else {
+        ((rect.size.width / cell).ceil().max(1.0) as usize, (rect.size.height / cell).ceil().max(1.0) as usize)
+    };
     let space = CGImage::color_space(Some(&pixels));
     // SAFETY: a null buffer makes Core Graphics allocate it.
     let Some(small) = (unsafe {

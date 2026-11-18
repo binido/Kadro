@@ -236,7 +236,7 @@ mod tests {
     use objc2_core_graphics::CGColorSpace;
 
     use super::*;
-    use crate::annotation::{Color, Size, Tool};
+    use crate::annotation::{Color, SOLID_PIXELATE, Size, Tool};
     use crate::output;
 
     /// Image where every pixel has its own color, so a one-pixel shift is visible.
@@ -325,6 +325,22 @@ mod tests {
 
         let hidden = pixels(&render(&images, &doc(state, annotations.to_vec()), Some(0), 1.0).unwrap());
         assert_eq!(hidden[5 * 30 + 15], plain[15 * 64 + 25]);
+    }
+
+    #[test]
+    fn solid_pixelate_leaves_one_color_and_no_source_pixels() {
+        let source = pattern(64, 40);
+        let mut solid = Annotation::new(Tool::Pixelate, Point::new(8.0, 6.0), Color::RED, Size::Small, SOLID_PIXELATE);
+        solid.points[1] = Point::new(40.0, 30.0);
+        let images = [source.clone()];
+        let state = State::original(64.0, 40.0);
+        let drawn = pixels(&render(&images, &doc(state, vec![solid]), None, 1.0).unwrap());
+        let plain = pixels(&source);
+        let inside: Vec<u32> = (6..30).flat_map(|y| (8..40).map(move |x| y * 64 + x)).map(|i| drawn[i]).collect();
+        assert!(inside.iter().all(|p| *p == inside[0]));
+        // every source pixel is unique, so none of them may survive inside the area
+        assert!((6..30).all(|y| (8..40).all(|x| drawn[y * 64 + x] != plain[y * 64 + x])));
+        assert_eq!(drawn[0], plain[0]);
     }
 
     #[test]

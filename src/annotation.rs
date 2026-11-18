@@ -20,6 +20,9 @@ impl Point {
     }
 }
 
+/// Pixelate style that fills the whole area with its average color, the only one that leaves no text to recover.
+pub const SOLID_PIXELATE: usize = 3;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tool {
     Arrow,
@@ -74,7 +77,8 @@ impl Tool {
             Tool::Rect => &["Outline", "Rounded", "Filled"],
             Tool::Oval => &["Outline", "Filled"],
             Tool::Text => &["Plain", "With background"],
-            Tool::Blur | Tool::Pixelate => &["Light", "Medium", "Strong"],
+            Tool::Blur => &["Light", "Medium", "Strong"],
+            Tool::Pixelate => &["Light", "Medium", "Strong", "Solid"],
             Tool::Spotlight => &["Rectangle", "Ellipse"],
             Tool::Magnifier => &["2×", "3×", "4×"],
             Tool::Ruler => &["Pixels", "Points"],
