@@ -10,6 +10,8 @@ use crate::settings::{self, Settings};
 use crate::{output, upload};
 
 const LATEST_RELEASE: &str = "https://api.github.com/repos/binido/Kadro/releases/latest";
+/// The only pages the update prompt opens.
+const RELEASE_PAGES: &str = "https://github.com/binido/Kadro/releases/";
 /// Automatic check runs at most once a day.
 const CHECK_INTERVAL: u64 = 86_400;
 
@@ -22,7 +24,8 @@ pub fn parse_release(json: &str) -> Option<(String, String)> {
         let end = after[start..].find('"')? + start;
         Some(after[start..end].to_string())
     };
-    Some((field("tag_name")?.trim_start_matches('v').to_string(), field("html_url")?))
+    let page = field("html_url").filter(|page| page.starts_with(RELEASE_PAGES))?;
+    Some((field("tag_name")?.trim_start_matches('v').to_string(), page))
 }
 
 /// Whether `latest` is newer than `current`. Versions are compared by dot-separated numbers.
@@ -120,6 +123,7 @@ mod tests {
             Some(("0.12.0".into(), "https://github.com/binido/Kadro/releases/tag/v0.12.0".into()))
         );
         assert_eq!(parse_release(r#"{"message":"Not Found"}"#), None);
+        assert_eq!(parse_release(r#"{"html_url":"https://evil.example/Kadro/releases/","tag_name":"v9.0.0"}"#), None);
     }
 
     #[test]
