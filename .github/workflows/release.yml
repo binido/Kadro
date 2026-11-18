@@ -13,7 +13,7 @@ jobs:
     # The image SDK decides the look. With an older SDK macOS 26+ draws windows in the old style.
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # The version from Cargo.toml goes into Info.plist, the tag must match it.
       - name: Check tag matches Cargo.toml version
@@ -21,17 +21,17 @@ jobs:
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
           test "$GITHUB_REF_NAME" = "v$version" || { echo "Tag $GITHUB_REF_NAME does not match Cargo.toml version $version"; exit 1; }
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           components: clippy, rustfmt
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - run: cargo fmt --check
 
       - run: cargo clippy --all-targets --locked -- -D warnings
 
-      - run: cargo test
+      - run: cargo test --locked
 
       - run: ./scripts/bundle.sh
 

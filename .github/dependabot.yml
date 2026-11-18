@@ -1,0 +1,7 @@
+# Actions are pinned to commits, Dependabot proposes the new ones.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
